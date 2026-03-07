@@ -4,7 +4,7 @@ export default defineConfig({
   lang: 'zh-CN',
   title: '个人技术博客',
   description: '全栈开发者 | 开源爱好者',
-  base: '/firstweb/',
+  base: '/',
 
   themeConfig: {
     nav: [
