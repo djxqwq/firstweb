@@ -1,0 +1,1 @@
+import{_ as a,o as r,c as e,ae as i}from"./chunks/framework.BvHJbMD4.js";const h=JSON.parse('{"title":"技能特长","description":"","frontmatter":{},"headers":[],"relativePath":"skills.md","filePath":"skills.md"}'),l={name:"skills.md"};function o(s,t,n,g,c,u){return r(),e("div",null,[...t[0]||(t[0]=[i("",7)])])}const _=a(l,[["render",o]]);export{h as __pageData,_ as default};

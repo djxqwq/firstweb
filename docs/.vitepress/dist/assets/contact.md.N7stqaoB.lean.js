@@ -1,0 +1,1 @@
+import{_ as a,o as r,c as e,ae as o}from"./chunks/framework.BvHJbMD4.js";const d=JSON.parse('{"title":"联系方式","description":"","frontmatter":{},"headers":[],"relativePath":"contact.md","filePath":"contact.md"}'),n={name:"contact.md"};function l(i,t,s,c,h,g){return r(),e("div",null,[...t[0]||(t[0]=[o("",8)])])}const _=a(n,[["render",l]]);export{d as __pageData,_ as default};

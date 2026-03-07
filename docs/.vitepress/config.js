@@ -4,7 +4,7 @@ export default defineConfig({
   lang: 'zh-CN',
   title: '个人技术博客',
   description: '全栈开发者 | 开源爱好者',
-  base: '/firstweb/',
+  base: '/',
 
   themeConfig: {
     nav: [
@@ -32,11 +32,11 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/占位' }
+      { icon: 'github', link: 'https://github.com/yourusername' }
     ],
     footer: {
       message: '用心构建，用爱分享',
-      copyright: 'Copyright © 20XX Your Name'
+      copyright: 'Copyright © 2026 Your Name'
     }
   }
 })
