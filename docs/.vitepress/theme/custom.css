@@ -764,19 +764,76 @@
   }
 }
 
-@media (max-width: 480px) {
-  .hero-title {
-    font-size: 2rem;
+@media (max-width: 640px) {
+  /* 手机端导航栏调整 */
+  .VPNavBarMenu {
+    display: none !important; /* 隐藏菜单 */
   }
 
-  .hero-avatar {
-    width: 120px;
-    height: 120px;
+  .VPNavBarHamburger {
+    display: block !important; /* 显示汉堡菜单 */
+  }
+
+  .VPNavBar .title {
+    font-size: 1.1rem;
+  }
+
+  .hero-title {
+    font-size: 2.2rem;
+  }
+
+  .hero-subtitle {
+    font-size: 1.1rem;
+  }
+
+  .hero-description {
+    font-size: 0.95rem;
+  }
+
+  .hero-links {
+    flex-direction: column;
+    gap: 0.8rem;
+  }
+
+  .hero-link {
+    padding: 0.6rem 1.2rem;
+    font-size: 0.9rem;
   }
 
   .section {
     padding: 3rem 1rem;
   }
+
+  .section-title {
+    font-size: 1.8rem;
+    margin-bottom: 2rem;
+  }
+
+  .skills-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .nav-cards {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .skill-card,
+  .nav-card {
+    padding: 1.5rem 1rem;
+  }
+
+  .about-content {
+    flex-direction: column;
+    gap: 2rem;
+  }
+
+  .about-text p {
+    font-size: 1rem;
+    line-height: 1.6;
+  }
+}
 
   .skill-card,
   .nav-card {
