@@ -32,11 +32,11 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/yourusername' }
+      { icon: 'github', link: 'https://github.com/djxqwq' }
     ],
     footer: {
       message: '用心构建，用爱分享',
-      copyright: 'Copyright © 2026 Your Name'
+      copyright: 'Copyright © 2026 邓锦鑫'
     }
   }
 })

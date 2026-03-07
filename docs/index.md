@@ -6,16 +6,16 @@ layout: home
 <div class="hero-section">
   <div class="hero-background"></div>
   <div class="hero-content">
-    <div class="hero-avatar">个人照片占位</div>
-    <h1 class="hero-title">Hello, I'm 【占位姓名】</h1>
-    <p class="hero-subtitle">【占位】全栈开发者 | 开源爱好者</p>
+    <div class="hero-avatar">邓锦鑫</div>
+    <h1 class="hero-title">Hello, I'm 邓锦鑫</h1>
+    <p class="hero-subtitle">软件工程全栈开发者 | 算法竞赛爱好者</p>
     <p class="hero-description">
-      专注于【占位】领域开发，热爱开源，喜欢分享技术心得。
-      目前在探索【占位】技术栈，致力于构建优雅、高效的解决方案。
+      浙江财经大学软件工程专业学生，专注于全栈开发和人工智能领域。
+      热爱算法竞赛，擅长C/C++、Python、Java开发，致力于构建优雅、高效的解决方案。
     </p>
     <div class="hero-links">
-      <a href="https://github.com/占位" target="_blank" class="hero-link">GitHub</a>
-      <a href="https://blog.csdn.net/占位" target="_blank" class="hero-link">CSDN</a>
+      <a href="https://github.com/djxqwq" target="_blank" class="hero-link">GitHub</a>
+      <a href="https://blog.csdn.net/你的CSDN用户名" target="_blank" class="hero-link">CSDN</a>
       <a href="/contact" class="hero-link">联系我</a>
     </div>
   </div>
@@ -30,13 +30,13 @@ layout: home
   <div class="about-content">
     <div class="about-text">
       <p>
-        我是一名充满热情的全栈开发者，专注于【占位】领域的技术探索和实践。
-        拥有【占位】年的开发经验，熟悉前后端技术栈，热爱开源社区，
-        喜欢通过技术博客分享学习心得和项目经验。
+        我是一名浙江财经大学软件工程专业的学生，充满热情的全栈开发者。
+        专注于全栈开发和人工智能领域的技术探索和实践，热爱算法竞赛。
+        擅长C/C++、Python、Java开发，熟悉前后端技术栈，喜欢通过技术项目分享学习心得。
       </p>
       <p>
-        在技术道路上，我始终保持学习的热情，关注行业前沿技术，
-        致力于用代码创造价值，用技术解决问题。
+        在技术道路上，我始终保持学习的热情，积极参与各类算法竞赛和项目开发，
+        致力于用代码创造价值，用技术解决问题，推动技术创新和实际应用。
       </p>
     </div>
   </div>
@@ -63,8 +63,8 @@ layout: home
     </div>
     <div class="skill-card">
       <div class="skill-icon">📚</div>
-      <h3>其他技能</h3>
-      <p>【占位】</p>
+      <h3>算法竞赛</h3>
+      <p>蓝桥杯、天梯赛、CCF竞赛</p>
     </div>
   </div>
 </div>

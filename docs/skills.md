@@ -1,22 +1,55 @@
 # 技能特长
 
-## 前端开发
+## 💻 编程语言
 
-- **编程语言**：JavaScript, TypeScript, HTML5, CSS3
-- **前端框架**：Vue.js, React, Angular
-- **UI 框架**：Element Plus, Ant Design, Tailwind CSS
-- **构建工具**：Vite, Webpack, Rollup
+- **C/C++**：扎实的语法基础，算法竞赛核心语言
+- **Python**：熟练掌握，用于数据处理、人工智能、后端开发
+- **Java**：掌握面向对象编程，Spring Boot 开发
+- **JavaScript**：前端开发，Vue.js 框架应用
 
-## 后端开发
+## 🎨 开发技术
 
-- **编程语言**：Node.js, Python, Java
-- **后端框架**：Express, Django, Spring Boot
-- **数据库**：MySQL, MongoDB, PostgreSQL, Redis
-- **API 设计**：RESTful API, GraphQL
+### 前端开发
+- **前端框架**：Vue.js, Uniapp 跨端开发
+- **UI 框架**：Element Plus, 自定义组件开发
+- **构建工具**：Vite, Webpack
+- **标记语言**：HTML5, CSS3
 
-## 开发工具
+### 后端开发
+- **后端框架**：Java Spring Boot, Python Flask/Django
+- **API 设计**：RESTful API 设计规范
+- **微服务**：了解微服务架构理念
 
-- **版本控制**：Git, GitHub, GitLab
-- **容器化**：Docker, Kubernetes
-- **CI/CD**：GitHub Actions, Jenkins
-- **开发环境**：VS Code, Linux, macOS
+## 🗄️ 数据库
+
+- **关系型数据库**：MySQL 数据库设计与 SQL 查询优化
+- **非关系型数据库**：MongoDB, Redis 基础应用
+- **数据库设计**：ER 模型设计，索引优化
+
+## 🛠️ 开发工具与规范
+
+- **开发工具**：IntelliJ IDEA, PyCharm, VS Code
+- **版本控制**：Git, GitHub, 熟悉 Git 工作流
+- **开发规范**：熟悉软件开发全流程与工程化规范
+- **操作系统**：Linux, Windows
+
+## 🧮 算法与数据结构
+
+- **数据结构**：数组、链表、栈、队列、树、图等
+- **算法设计**：排序、搜索、动态规划、贪心算法
+- **算法竞赛**：ACM/ICPC、蓝桥杯、天梯赛等竞赛经验
+- **复杂度分析**：时间复杂度和空间复杂度优化
+
+## 🤖 人工智能相关
+
+- **机器学习**：深度学习基础，神经网络原理
+- **计算机视觉**：OpenCV 图像处理，YOLO 目标检测
+- **深度学习框架**：PyTorch, CUDA 并行计算
+- **数据处理**：数据挖掘，数据预处理技术
+
+## 📋 综合能力
+
+- **项目管理**：团队协作，项目进度管理
+- **问题解决**：算法思维，系统分析能力
+- **学习能力**：快速学习新技术，持续自我提升
+- **沟通表达**：技术分享，团队协作沟通
