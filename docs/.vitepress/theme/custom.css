@@ -6,16 +6,109 @@
   --project-card-border: var(--vp-c-divider);
   --tag-bg: var(--vp-c-brand-soft);
   --tag-text: var(--vp-c-brand-1);
+  /* 新增：定义侧边栏宽度，方便统一计算 */
+  --vp-sidebar-width: 240px;
 }
 
-/* 隐藏默认内容，使用全屏布局 */
-.VPContent {
-  padding: 0 !important;
+/* 导航栏菜单均匀分布样式 */
+.VPNavBar {
+  width: 100%;
+  padding: 0;
+  max-width: none;
 }
 
-.VPDoc {
-  padding: 0 !important;
-  max-width: none !important;
+.VPNavBar .wrapper {
+  width: 100%;
+  padding: 0 1rem;
+  max-width: none;
+}
+
+.VPNavBar .container {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between; /* 标题和菜单均匀分布 */
+}
+
+.VPNavBar .title {
+  flex: 0 0 auto;
+}
+
+.VPNavBar .content {
+  flex: 1;
+  display: flex;
+  justify-content: center; /* 菜单项在可用空间内居中 */
+}
+
+.VPNavBarMenu {
+  display: flex;
+  justify-content: center; /* 菜单项均匀分布 */
+  gap: 1rem; /* 菜单项间距 */
+  flex-wrap: wrap;
+}
+
+/* 侧边栏滚动条样式 */
+.VPSidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.VPSidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.VPSidebar::-webkit-scrollbar-thumb {
+  background: var(--vp-c-brand-1);
+  border-radius: 3px;
+}
+
+.VPSidebar::-webkit-scrollbar-thumb:hover {
+  background: var(--vp-c-brand-2);
+}
+
+/* 项目卡片网格 - 恢复正常布局 */
+.projects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 2rem;
+  max-width: 1200px;
+  margin: 2rem auto;
+  padding: 0 2rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* 优化右侧目录 */
+.VPDocOutline {
+  position: sticky;
+  top: calc(var(--vp-nav-height) + 24px);
+  max-height: calc(100vh - var(--vp-nav-height) - 48px);
+  overflow-y: auto;
+  padding: 1rem;
+  border-radius: 8px;
+  background: var(--vp-c-bg-soft);
+  /* 右侧目录宽度限制，避免挤压内容 */
+  width: 280px !important;
+  flex: none !important;
+}
+
+.VPDocOutlineItem {
+  margin-bottom: 0.5rem;
+}
+
+.VPDocOutlineLink {
+  color: var(--vp-c-text-2);
+  text-decoration: none;
+  font-size: 0.9rem;
+  transition: color 0.2s ease;
+}
+
+.VPDocOutlineLink:hover {
+  color: var(--vp-c-brand-1);
+}
+
+.VPDocOutlineLink.active {
+  color: var(--vp-c-brand-1);
+  font-weight: 600;
 }
 
 /* 全屏英雄区域 */
@@ -88,6 +181,12 @@
   font-weight: 300;
 }
 
+/* 白天模式下的hero-subtitle颜色适配 */
+:not(.dark) .hero-subtitle {
+  color: var(--vp-c-text-2);
+  opacity: 1;
+}
+
 .hero-description {
   font-size: 1.2rem;
   line-height: 1.8;
@@ -96,6 +195,12 @@
   max-width: 600px;
   margin-left: auto;
   margin-right: auto;
+}
+
+/* 白天模式下的hero-description颜色适配 */
+:not(.dark) .hero-description {
+  color: var(--vp-c-text-2);
+  opacity: 0.9;
 }
 
 .hero-links {
@@ -210,7 +315,7 @@
 
 .skill-card {
   padding: 2.5rem;
-  background: white;
+  background: var(--vp-c-bg-soft); /* 适配深色模式 */
   border: 1px solid var(--vp-c-divider);
   border-radius: 16px;
   text-align: center;
@@ -254,7 +359,7 @@
 .nav-card {
   display: block;
   padding: 3rem 2rem;
-  background: white;
+  background: var(--vp-c-bg-soft); /* 适配深色模式 */
   border: 1px solid var(--vp-c-divider);
   border-radius: 16px;
   text-decoration: none;
@@ -289,16 +394,9 @@
   line-height: 1.6;
 }
 
-/* 项目卡片网格 */
-.projects-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-  gap: 2.5rem;
-  margin: 3rem 0;
-}
-
+/* 项目卡片样式优化 */
 .project-card {
-  background: white;
+  background: var(--vp-c-bg-soft);
   border: 1px solid var(--vp-c-divider);
   border-radius: 16px;
   padding: 2rem;
@@ -307,8 +405,8 @@
 }
 
 .project-card:hover {
-  transform: translateY(-8px);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
   border-color: var(--vp-c-brand-1);
 }
 
@@ -317,70 +415,102 @@
 }
 
 .project-header h3 {
-  margin: 0 0 1rem;
-  font-size: 1.5rem;
+  margin: 0 0 1.5rem;
+  font-size: 1.4rem;
   color: var(--vp-c-text-1);
   font-weight: 600;
+  line-height: 1.4;
 }
 
 .project-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
+  margin-bottom: 1.5rem;
 }
 
 .tag {
-  background: var(--tag-bg);
+  background: linear-gradient(135deg, var(--tag-bg), var(--vp-c-brand-soft));
   color: var(--tag-text);
-  padding: 0.5rem 1rem;
+  padding: 0.6rem 1.2rem;
   border-radius: 20px;
   font-size: 0.85rem;
   font-weight: 500;
+  border: 1px solid var(--vp-c-brand-1);
+  transition: all 0.2s ease;
+}
+
+.tag:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
 }
 
 .project-description {
   color: var(--vp-c-text-2);
-  line-height: 1.7;
+  line-height: 1.8;
   margin-bottom: 2rem;
   font-size: 1rem;
+  text-align: left;
 }
 
+/* 修复project-links的错误样式（你之前写错了，把link的样式写到了grid上） */
 .project-links {
   display: flex;
   gap: 1rem;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .project-link {
   display: inline-flex;
   align-items: center;
-  padding: 0.75rem 1.5rem;
+  padding: 0.7rem 1.4rem;
   background: var(--vp-c-bg);
   border: 1px solid var(--vp-c-divider);
   border-radius: 25px;
   text-decoration: none;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   font-weight: 500;
   color: var(--vp-c-text-1);
   transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.project-link::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s ease;
+}
+
+.project-link:hover::before {
+  left: 100%;
 }
 
 .project-link:hover {
   background: var(--vp-c-brand-1);
   color: white;
   border-color: var(--vp-c-brand-1);
-  transform: translateY(-2px);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 25px rgba(37, 99, 235, 0.3);
 }
 
 .project-link.primary {
-  background: var(--vp-c-brand-1);
+  background: linear-gradient(135deg, var(--vp-c-brand-1), var(--vp-c-brand-2));
   color: white;
-  border-color: var(--vp-c-brand-1);
+  border: none;
+  box-shadow: 0 4px 15px rgba(37, 99, 235, 0.2);
 }
 
 .project-link.primary:hover {
-  background: var(--vp-c-brand-2);
-  border-color: var(--vp-c-brand-2);
+  background: linear-gradient(135deg, var(--vp-c-brand-2), var(--vp-c-brand-3));
+  transform: translateY(-3px);
+  box-shadow: 0 8px 30px rgba(37, 99, 235, 0.4);
 }
 
 /* 项目详情页元信息 */
@@ -403,20 +533,162 @@
   margin-bottom: 0;
 }
 
-/* 鼠标拖尾特效 */
-.cursor-trail {
-  position: fixed;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(37, 99, 235, 0.6), transparent);
-  pointer-events: none;
-  z-index: 9999;
-  transition: transform 0.1s ease-out;
-  transform: translate(-50%, -50%);
+/* 点击特效动画 */
+@keyframes clickRipple {
+  0% {
+    transform: scale(0);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+@keyframes clickParticle {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: translate(calc(-50% + var(--target-x) * 0.5), calc(-50% + var(--target-y) * 0.5)) scale(1.2);
+    opacity: 0.8;
+  }
+  100% {
+    transform: translate(calc(-50% + var(--target-x)), calc(-50% + var(--target-y))) scale(0.5);
+    opacity: 0;
+  }
+}
+
+/* 烟花特效动画 */
+@keyframes fireworkCore {
+  0% {
+    transform: scale(0);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+}
+
+@keyframes fireworkSpark {
+  0% {
+    transform: translate(-50%, -50%) scale(1) rotate(0deg);
+    opacity: 1;
+  }
+  20% {
+    transform: translate(calc(-50% + var(--target-x) * 0.2), calc(-50% + var(--target-y) * 0.2)) scale(1.2) rotate(var(--rotation));
+    opacity: 1;
+  }
+  60% {
+    transform: translate(calc(-50% + var(--target-x) * 0.7), calc(-50% + var(--target-y) * 0.7)) scale(0.8) rotate(var(--rotation));
+    opacity: 0.8;
+  }
+  100% {
+    transform: translate(calc(-50% + var(--target-x)), calc(-50% + var(--target-y))) scale(0.3) rotate(var(--rotation));
+    opacity: 0;
+  }
+}
+
+@keyframes fireworkTrail {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: translate(calc(-50% + var(--target-x) * 0.6), calc(-50% + var(--target-y) * 0.6)) scale(1.5);
+    opacity: 0.8;
+  }
+  100% {
+    transform: translate(calc(-50% + var(--target-x)), calc(-50% + var(--target-y))) scale(0.5);
+    opacity: 0;
+  }
+}
+
+@keyframes fireworkStar {
+  0% {
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 0;
+  }
+  10% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: translate(calc(-50% + var(--target-x) * 0.4), calc(-50% + var(--target-y) * 0.4)) scale(1.2);
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(calc(-50% + var(--target-x)), calc(-50% + var(--target-y))) scale(0);
+    opacity: 0;
+  }
 }
 
 /* 响应式设计 */
+@media (max-width: 960px) {
+  /* 导航栏响应式调整 - 保持菜单均匀分布 */
+  .VPNavBar {
+    width: 100%;
+    padding: 0;
+  }
+
+  .VPNavBar .wrapper {
+    width: 100%;
+    padding: 0 0.5rem;
+  }
+
+  .VPNavBar .container {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .VPNavBar .title {
+    flex-shrink: 0;
+  }
+
+  .VPNavBar .content {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+  }
+
+  .VPNavBarMenu {
+    display: flex !important;
+    justify-content: center;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+  }
+
+  .VPNavBarMenuLink {
+    padding: 0.5rem 0.6rem;
+    font-size: 0.9rem;
+  }
+
+  .VPNavBarHamburger {
+    display: none; /* 在中等屏幕上保持菜单显示 */
+  }
+
+  .projects-grid {
+    grid-template-columns: 1fr;
+    padding: 0 1.5rem;
+    gap: 1.5rem;
+    margin: 2rem auto;
+  }
+
+  .VPDocOutline {
+    display: none;
+  }
+}
+
 @media (max-width: 768px) {
   .hero-title {
     font-size: 2.5rem;
@@ -459,8 +731,8 @@
   }
 
   .projects-grid {
-    grid-template-columns: 1fr;
     gap: 2rem;
+    padding: 0 0.5rem;
   }
 
   .skill-card,
@@ -468,9 +740,27 @@
     padding: 2rem 1.5rem;
   }
 
+  .project-card {
+    padding: 2rem 1.5rem;
+  }
+
   .project-meta {
     flex-direction: column;
     gap: 1.5rem;
+  }
+
+  .project-header h3 {
+    font-size: 1.4rem;
+  }
+
+  .project-description {
+    font-size: 1rem;
+    text-align: left;
+  }
+
+  .project-link {
+    padding: 0.7rem 1.4rem;
+    font-size: 0.9rem;
   }
 }
 

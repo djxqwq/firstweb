@@ -1,37 +1,43 @@
-# 🎯 项目 C（占位）
+# 🔥 浓烟环境人体目标判别系统
 
 <div class="project-meta">
   <div class="project-links">
-    <a href="https://github.com/占位/项目C" target="_blank" class="project-link">📦 GitHub</a>
-    <a href="https://blog.csdn.net/占位/article/details/占位" target="_blank" class="project-link">📝 CSDN</a>
+    <a href="https://github.com/djxqwq" target="_blank" class="project-link">📦 GitHub</a>
+    <a href="#" target="_blank" class="project-link">📝 技术报告</a>
   </div>
   <div class="project-tags">
-    <span class="tag">TypeScript</span>
-    <span class="tag">Vite</span>
-    <span class="tag">Docker</span>
+    <span class="tag">Python</span>
+    <span class="tag">OpenCV</span>
+    <span class="tag">YOLOv5</span>
+    <span class="tag">PyTorch</span>
   </div>
 </div>
 
 ## 项目简介
 
-基于 TypeScript 和 Vite 构建的现代化前端工具库，提供常用的组件和工具函数，旨在提升开发效率和代码质量。
+聚焦火灾救援痛点开发智能判别系统，辅助消防机器人定位被困人员；基于 Python 搭建框架，通过 OpenCV 预处理烟雾图像，集成 YOLOv5 并基于 PyTorch/CUDA 优化推理性能，设计多线程架构保障运行效率。
 
 ## 核心功能
 
-- 🎨 **组件库**: 20+ 可复用的 UI 组件
-- 🛠️ **工具函数**: 50+ 实用工具函数
-- 📦 **模块化**: 支持按需引入，减少打包体积
-- 🚀 **性能优化**: 基于 Vite 的极速构建
-- 📚 **完整文档**: 详细的 API 文档和使用示例
+- 🔍 **目标检测**: 在浓烟环境中识别人体目标
+- 🎯 **精准定位**: 实时定位被困人员位置
+- ⚡ **实时处理**: 多线程架构保障实时性
+- � **可视化**: 检测结果可视化展示
+- 🚀 **性能优化**: GPU加速推理
+- 🌫️ **烟雾适应**: 专门针对烟雾环境优化
 
 ## 技术栈
 
-- **前端框架**: TypeScript + Vite
-- **构建工具**: Vite + Rollup
-- **测试框架**: Vitest + Testing Library
-- **文档生成**: VitePress
-- **CI/CD**: GitHub Actions
-- **包管理**: npm + pnpm
+### 核心技术
+- **深度学习框架**: PyTorch + CUDA
+- **目标检测**: YOLOv5
+- **图像处理**: OpenCV
+- **开发语言**: Python 3.8+
+
+### 硬件支持
+- **GPU**: NVIDIA CUDA 支持
+- **内存**: 16GB+ RAM
+- **存储**: SSD 优化数据读取
 
 ## 项目架构
 

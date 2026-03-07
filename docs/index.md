@@ -15,7 +15,7 @@ layout: home
     </p>
     <div class="hero-links">
       <a href="https://github.com/djxqwq" target="_blank" class="hero-link">GitHub</a>
-      <a href="https://blog.csdn.net/你的CSDN用户名" target="_blank" class="hero-link">CSDN</a>
+      <a href="https://blog.csdn.net/2302_79866931" target="_blank" class="hero-link">CSDN</a>
       <a href="/contact" class="hero-link">联系我</a>
     </div>
   </div>

@@ -1,50 +1,49 @@
-# ⚡ 项目 B（占位）
+# 🌐 基于物联网的养老陪护系统
 
 <div class="project-meta">
   <div class="project-links">
-    <a href="https://github.com/占位/项目B" target="_blank" class="project-link">📦 GitHub</a>
-    <a href="https://blog.csdn.net/占位/article/details/占位" target="_blank" class="project-link">📝 CSDN</a>
+    <a href="https://github.com/djxqwq" target="_blank" class="project-link">📦 GitHub</a>
+    <a href="#" target="_blank" class="project-link">📝 软著证书</a>
   </div>
   <div class="project-tags">
-    <span class="tag">React</span>
+    <span class="tag">Java</span>
     <span class="tag">Python</span>
-    <span class="tag">PostgreSQL</span>
+    <span class="tag">MySQL</span>
+    <span class="tag">物联网</span>
   </div>
 </div>
 
 ## 项目简介
 
-使用 React 前端和 Python 后端开发的数据分析平台，支持实时数据处理和图表可视化。该平台为企业提供数据洞察和决策支持，具有强大的数据处理能力和友好的用户界面。
+聚焦物联网与智慧养老融合，针对传统养老健康监护滞后等痛点构建全闭环陪护系统；基于 Java/Python 完成后端逻辑开发与接口封装，设计并优化 MySQL 数据库表结构，完成物联网设备数据对接与健康指标实时同步。
 
 ## 核心功能
 
-- 📊 **数据采集**: 支持多种数据源接入
-- 🔄 **实时处理**: 流式数据处理和分析
-- 📈 **可视化**: 丰富的图表展示组件
-- 🎯 **智能分析**: AI 驱动的数据洞察
-- 📋 **报表生成**: 自动化报表和导出
+- 🏠 **智能家居集成**: 各种IoT设备统一管理
+- � **健康数据监测**: 实时采集和分析健康指标
+- � **异常预警**: 智能识别异常情况并及时告警
+- 📱 **远程监护**: 家属远程查看老人状态
+- 💬 **语音交互**: 智能语音助手和对话系统
+- � **数据分析**: 健康趋势分析和预测
 
 ## 技术栈
 
-### 前端技术
-- **框架**: React 18 + TypeScript
-- **状态管理**: Redux Toolkit
-- **图表库**: ECharts + D3.js
-- **UI 组件**: Ant Design
-- **构建工具**: Webpack 5
-
 ### 后端技术
-- **语言**: Python 3.10+
-- **框架**: Django + Django REST Framework
-- **数据库**: PostgreSQL + Redis
-- **数据处理**: Pandas + NumPy
-- **机器学习**: Scikit-learn + TensorFlow
+- **Java开发**: Spring Boot + MyBatis
+- **Python开发**: Django + NumPy/Pandas
+- **数据库**: MySQL + Redis
+- **消息队列**: RabbitMQ
+
+### 物联网技术
+- **通信协议**: MQTT + CoAP
+- **硬件平台**: Raspberry Pi + Arduino
+- **传感器**: 温湿度、心率、运动传感器
+- **网关**: IoT Gateway
 
 ### 数据处理
-- **流处理**: Apache Kafka
-- **任务队列**: Celery + Redis
-- **数据仓库**: ClickHouse
-- **监控**: Prometheus + Grafana
+- **实时处理**: Apache Kafka + Spark Streaming
+- **数据存储**: InfluxDB + MongoDB
+- **机器学习**: TensorFlow + Scikit-learn
 
 ## 系统架构
 

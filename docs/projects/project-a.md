@@ -1,44 +1,49 @@
-# 🚀 项目 A（占位）
+# 🤖 派陪 - Pepper 机器人智能养老护理解决方案
 
 <div class="project-meta">
   <div class="project-links">
-    <a href="https://github.com/占位/项目A" target="_blank" class="project-link">📦 GitHub</a>
-    <a href="https://blog.csdn.net/占位/article/details/占位" target="_blank" class="project-link">📝 CSDN</a>
+    <a href="https://github.com/djxqwq" target="_blank" class="project-link">📦 GitHub</a>
+    <a href="#" target="_blank" class="project-link">📝 项目文档</a>
   </div>
   <div class="project-tags">
-    <span class="tag">Vue.js</span>
-    <span class="tag">Node.js</span>
-    <span class="tag">MongoDB</span>
+    <span class="tag">Uniapp</span>
+    <span class="tag">小程序开发</span>
+    <span class="tag">跨端开发</span>
   </div>
 </div>
 
 ## 项目简介
 
-一个基于 Vue.js 和 Node.js 的全栈 Web 应用，实现了用户管理、数据处理和可视化展示功能。该项目采用现代化的前端框架和后端技术栈，提供了完整的用户交互体验。
+针对传统养老远程关怀不便、健康数据追踪难等痛点搭建全链路智能养老服务体系；基于 Uniapp 跨端开发养老服务小程序，负责需求分析至兼容性优化全流程，实现健康数据可视化等三大核心模块，通过代码分包等优化使首屏加载提速30%。
 
 ## 核心功能
 
-- 👤 **用户管理**: 注册、登录、权限控制
-- 📊 **数据处理**: 实时数据采集和分析
-- 📈 **可视化展示**: 图表展示和数据报表
-- 🔔 **消息通知**: 实时消息推送
-- 📱 **响应式设计**: 支持多端访问
+- � **远程监护**: 实时视频通话和健康监测
+- 📊 **健康数据可视化**: 血压、心率、血糖等数据图表展示
+- 🤖 **Pepper机器人集成**: 智能对话和日常提醒功能
+- 🏥 **紧急求助**: 一键呼叫和异常预警
+- � **用药提醒**: 智能用药时间和剂量提醒
+- 📱 **跨端支持**: 小程序、APP、Web多端同步
 
 ## 技术栈
 
 ### 前端技术
-- **框架**: Vue.js 3 + Composition API
-- **状态管理**: Pinia
-- **UI 组件**: Element Plus
-- **构建工具**: Vite
-- **样式**: SCSS + CSS Modules
+- **框架**: Uniapp + Vue.js 3
+- **跨端**: 微信小程序、支付宝小程序、APP、H5
+- **UI组件**: uView UI
+- **状态管理**: Vuex
+- **图表库**: ECharts
 
 ### 后端技术
-- **运行环境**: Node.js 18+
-- **框架**: Express.js
-- **数据库**: MongoDB + Mongoose
-- **认证**: JWT + bcrypt
-- **API 文档**: Swagger
+- **框架**: Node.js + Express
+- **数据库**: MySQL + Redis
+- **API**: RESTful API
+- **实时通信**: WebSocket
+
+### 硬件集成
+- **机器人**: Pepper SDK
+- **传感器**: 血压计、心率监测仪
+- **通信**: 4G/WiFi/蓝牙
 
 ### 开发工具
 - **版本控制**: Git + GitHub

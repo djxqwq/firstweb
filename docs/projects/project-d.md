@@ -1,50 +1,50 @@
-# 🔧 项目 D（占位）
+# 🌐 全栈开发实践项目
 
 <div class="project-meta">
   <div class="project-links">
-    <a href="https://github.com/占位/项目D" target="_blank" class="project-link">📦 GitHub</a>
-    <a href="https://blog.csdn.net/占位/article/details/占位" target="_blank" class="project-link">📝 CSDN</a>
+    <a href="https://github.com/djxqwq" target="_blank" class="project-link">📦 GitHub</a>
+    <a href="#" target="_blank" class="project-link">📝 课程报告</a>
   </div>
   <div class="project-tags">
-    <span class="tag">Java</span>
+    <span class="tag">Vue.js</span>
     <span class="tag">Spring Boot</span>
+    <span class="tag">RESTful API</span>
     <span class="tag">MySQL</span>
   </div>
 </div>
 
 ## 项目简介
 
-企业级微服务架构项目，使用 Spring Boot 构建，包含用户管理、订单处理和支付集成等核心业务功能。
+软件工程课程的全栈开发实践项目，涵盖需求分析、系统设计、前后端开发、测试部署完整流程。采用现代化技术栈，实现用户管理、数据处理、可视化展示等核心功能模块。
 
 ## 核心功能
 
-- 👥 **用户管理**: 用户注册、登录、权限管理
-- 🛒 **订单系统**: 商品下单、库存管理、订单跟踪
-- 💳 **支付集成**: 多种支付方式接入
-- 📊 **数据分析**: 业务数据统计和可视化
-- 🔐 **安全防护**: 数据加密、防攻击机制
+- � **用户管理**: 注册、登录、个人信息管理
+- � **数据处理**: 数据采集、清洗、分析和存储
+- � **可视化展示**: 图表展示和数据报表
+- � **搜索功能**: 全文搜索和高级筛选
+- � **响应式设计**: 支持多端访问
+- �🔐 **权限控制**: 基于角色的访问控制
 
 ## 技术栈
+
+### 前端技术
+- **框架**: Vue.js 3 + Composition API
+- **状态管理**: Pinia
+- **UI组件**: Element Plus
+- **构建工具**: Vite
+- **图表库**: ECharts
 
 ### 后端技术
 - **框架**: Spring Boot 2.7+
 - **数据库**: MySQL 8.0 + Redis
-- **消息队列**: RabbitMQ
-- **缓存**: Redis + Caffeine
-- **搜索**: Elasticsearch
-- **监控**: Prometheus + Grafana
+- **API**: RESTful API
+- **认证**: JWT + Spring Security
 
-### 前端技术
-- **框架**: Vue.js 3 + TypeScript
-- **UI 库**: Element Plus
-- **构建工具**: Vite
-- **状态管理**: Pinia
-
-### 基础设施
-- **容器化**: Docker + Docker Compose
-- **CI/CD**: Jenkins + GitLab CI
-- **部署**: Kubernetes
-- **日志**: ELK Stack
+### 开发工具
+- **版本控制**: Git + GitHub
+- **测试**: Jest + JUnit
+- **CI/CD**: GitHub Actions
 
 ## 系统架构
 
