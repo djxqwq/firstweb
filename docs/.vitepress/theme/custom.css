@@ -770,6 +770,10 @@
     display: none !important; /* 隐藏菜单 */
   }
 
+  .VPNavBarMenuLink {
+    display: none !important; /* 隐藏菜单项 */
+  }
+
   .VPNavBarHamburger {
     display: block !important; /* 显示汉堡菜单 */
   }
@@ -832,15 +836,5 @@
   .about-text p {
     font-size: 1rem;
     line-height: 1.6;
-  }
-}
-
-  .skill-card,
-  .nav-card {
-    padding: 1.5rem;
-  }
-
-  .project-card {
-    padding: 1.5rem;
   }
 }
