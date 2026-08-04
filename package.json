@@ -1,14 +1,12 @@
 {
-  "name": "vitepress-job-blog-template",
+  "name": "dengjinxin-blog",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
   "scripts": {
-    "dev": "vitepress dev docs",
-    "build": "vitepress build docs",
-    "preview": "vitepress preview docs"
-  },
-  "devDependencies": {
-    "vitepress": "^1.6.3"
+    "dev:home": "npm run dev --prefix home",
+    "dev:about": "npm run dev --prefix about-web",
+    "dev:api": "cd backend && .venv\\Scripts\\python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000",
+    "build:home": "npm run build --prefix home",
+    "build:about": "npm run build --prefix about-web"
   }
 }

@@ -1,0 +1,1 @@
+import{_ as i,o as a,c as t,ae as r}from"./chunks/framework.BvHJbMD4.js";const g=JSON.parse('{"title":"教育背景","description":"","frontmatter":{},"headers":[],"relativePath":"education.md","filePath":"education.md"}'),o={name:"education.md"};function e(n,l,s,u,h,d){return a(),t("div",null,[...l[0]||(l[0]=[r("",12)])])}const _=i(o,[["render",e]]);export{g as __pageData,_ as default};

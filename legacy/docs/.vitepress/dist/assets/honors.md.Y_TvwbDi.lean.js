@@ -1,0 +1,1 @@
+import{_ as a,o as r,c as t,ae as l}from"./chunks/framework.BvHJbMD4.js";const u=JSON.parse('{"title":"荣誉证书","description":"","frontmatter":{},"headers":[],"relativePath":"honors.md","filePath":"honors.md"}'),i={name:"honors.md"};function n(s,o,e,h,g,d){return r(),t("div",null,[...o[0]||(o[0]=[l("",15)])])}const _=a(i,[["render",n]]);export{u as __pageData,_ as default};

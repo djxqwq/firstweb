@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+/*
+  Style direction:
+  - Inspired by VertexHQ cyberpunk-react-dev-portfolio (neon cyan glass)
+  - McKlay/portfolio-website (cosmic starfield layering)
+  - Simone-techAIGC/cyber-portfolio (Orbitron + JetBrains Mono terminal feel)
+  Avoid purple-on-white / cream-serif AI defaults.
+*/
+
+:root {
+  --void: #030712;
+  --space: #05080f;
+  --panel: rgba(8, 16, 28, 0.72);
+  --cyan: #22d3ee;
+  --cyan-dim: rgba(34, 211, 238, 0.15);
+  --green: #4ade80;
+  --amber: #fbbf24;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --line: rgba(34, 211, 238, 0.28);
+  --font-display: "Orbitron", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  background: var(--void);
+  font-family: var(--font-mono);
+  overflow-x: hidden;
+}
+
+::selection {
+  background: rgba(34, 211, 238, 0.35);
+  color: #fff;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.glass {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(14px);
+  box-shadow:
+    0 0 0 1px rgba(34, 211, 238, 0.05),
+    0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+.scanline::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 2px,
+    rgba(34, 211, 238, 0.03) 3px
+  );
+  opacity: 0.5;
+}
+
+.cyber-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.35rem;
+  border: 1px solid rgba(34, 211, 238, 0.55);
+  border-radius: 999px;
+  color: var(--cyan);
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.12), rgba(34, 211, 238, 0.02));
+  text-decoration: none;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+  overflow: hidden;
+}
+
+.cyber-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 24px rgba(34, 211, 238, 0.35);
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.22), rgba(34, 211, 238, 0.06));
+}
+
+.cyber-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.18) 50%, transparent 70%);
+  transform: translateX(-120%);
+  transition: transform 0.6s ease;
+}
+
+.cyber-btn:hover::before {
+  transform: translateX(120%);
+}
+
+.section-title {
+  font-family: var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: clamp(1.4rem, 2.4vw, 2rem);
+  color: #f8fafc;
+}
+
+.section-title span {
+  color: var(--cyan);
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid rgba(74, 222, 128, 0.35);
+  border-radius: 999px;
+  color: var(--green);
+  background: rgba(74, 222, 128, 0.08);
+  font-size: 0.72rem;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.92);
+    opacity: 0.85;
+  }
+  70% {
+    transform: scale(1.18);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.18);
+    opacity: 0;
+  }
+}
+
+.avatar-ring {
+  animation: pulse-ring 2.8s ease-out infinite;
+}

@@ -1,0 +1,1 @@
+import{_ as l,o as t,c as i,ae as r}from"./chunks/framework.BvHJbMD4.js";const _=JSON.parse('{"title":"校园经历","description":"","frontmatter":{},"headers":[],"relativePath":"campus.md","filePath":"campus.md"}'),e={name:"campus.md"};function o(s,a,n,c,u,d){return t(),i("div",null,[...a[0]||(a[0]=[r("",7)])])}const m=l(e,[["render",o]]);export{_ as __pageData,m as default};

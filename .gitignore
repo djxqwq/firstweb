@@ -2,3 +2,17 @@ node_modules
 .DS_Store
 .vitepress/cache
 .vitepress/dist
+frontend/dist
+frontend/node_modules
+about/node_modules
+about-web/node_modules
+about-web/dist
+home/node_modules
+backend/.venv
+backend/__pycache__
+backend/app/__pycache__
+backend/data.db
+uploads/
+*.db
+.env
+.next

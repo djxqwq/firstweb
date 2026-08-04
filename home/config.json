@@ -1,0 +1,45 @@
+{
+  "head": {
+    "title": "邓锦鑫 | 个人技术博客",
+    "description": "软件工程全栈开发者 | 算法竞赛爱好者 · 浙江财经大学",
+    "favicon": "favicon.ico"
+  },
+  "intro": {
+    "title": "邓锦鑫",
+    "subtitle": "软件工程全栈开发者 | 算法竞赛爱好者",
+    "enter": "进入",
+    "supportAuthor": false,
+    "background": true
+  },
+  "main": {
+    "name": "邓锦鑫",
+    "signature": "全栈 · 算法 · 人工智能",
+    "avatar": {
+      "link": "assets/avatar.jpg",
+      "height": "100",
+      "width": "100"
+    },
+    "ul": {
+      "first": {
+        "href": "http://127.0.0.1:3000/",
+        "icon": "bokeyuan",
+        "text": "作品集"
+      },
+      "second": {
+        "href": "http://127.0.0.1:3000/#about-me",
+        "icon": "xiaolian",
+        "text": "关于我"
+      },
+      "third": {
+        "href": "mailto:1075751918@qq.com",
+        "icon": "email",
+        "text": "邮箱"
+      },
+      "fourth": {
+        "href": "https://github.com/djxqwq",
+        "icon": "github",
+        "text": "GitHub"
+      }
+    }
+  }
+}
