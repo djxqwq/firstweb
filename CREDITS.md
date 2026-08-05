@@ -14,3 +14,11 @@
 ## Secondary (备选，非主站)
 
 - [sanidhyy/space-portfolio](https://github.com/sanidhyy/space-portfolio) — MIT — 目录 `frontend/`
+
+## Boot / entrance (integrated)
+
+- [ItsWanheda/SystemBreach-Preloader](https://github.com/ItsWanheda/SystemBreach-Preloader) — MIT — full cyber glitch terminal boot in `frontend/public/boot/` (branded theme overlay `theme-site.css`)
+
+## Music player
+
+- Custom starfield glass dock + Web Audio AnalyserNode spectrum orbit (local ambient WAV loops in `frontend/public/music/`)

@@ -944,28 +944,43 @@ function loadMain() {
 					direction: "diagonal",
 					speed: isPhone ? 0.03 : 0.05,
 					borderColor: isPhone
-						? "rgba(255, 255, 255, 0.2)"
-						: "rgba(255, 255, 255, 0.1)",
+						? "rgba(167, 139, 250, 0.22)"
+						: "rgba(112, 66, 248, 0.18)",
 					squareSize: isPhone ? 50 : 40,
-					hoverFillColor: "rgba(255, 255, 255, 0.8)",
-					hoverShadowColor: "rgba(255, 255, 255, 0.8)",
-					transitionDuration: isPhone ? 150 : 200, // 移动端更快的过渡
-					trailDuration: isPhone ? 2000 : 1500, // 移动端更长的痕迹
-					specialBlockColor: "rgba(100, 255, 152, 0.8)",
-					specialHoverColor: "rgba(29, 202, 29, 0.8)",
-					// 蛇身颜色渐变配置
+					hoverFillColor: "rgba(103, 232, 249, 0.55)",
+					hoverShadowColor: "rgba(167, 139, 250, 0.75)",
+					transitionDuration: isPhone ? 150 : 200,
+					trailDuration: isPhone ? 2000 : 1500,
+					specialBlockColor: "rgba(112, 66, 248, 0.85)",
+					specialHoverColor: "rgba(34, 211, 238, 0.9)",
 					snakeHeadColor: "rgba(255, 255, 255, 0.95)",
-					snakeTailColor: "rgba(218, 231, 255, 0.25)",
-					snakeColorDecay: 0.85, // 颜色衰减系数
-					// 移动端特殊配置
-					touchSensitivity: isPhone ? 1.2 : 1.0, // 触摸灵敏度
-					vibrationEnabled: isPhone, // 是否启用震动反馈
+					snakeTailColor: "rgba(167, 139, 250, 0.3)",
+					snakeColorDecay: 0.85,
+					touchSensitivity: isPhone ? 1.2 : 1.0,
+					vibrationEnabled: isPhone,
 				});
 				gridAnimation.init();
+				bindPortfolioLinks();
 			}
 		}, 1100);
 	}, 400);
 	loadMain.loaded = true;
+}
+
+function bindPortfolioLinks() {
+	if (bindPortfolioLinks.bound) return;
+	bindPortfolioLinks.bound = true;
+	document.querySelectorAll('a[data-same-site="true"]').forEach((el) => {
+		el.addEventListener("click", (e) => {
+			e.preventDefault();
+			const href = el.getAttribute("href");
+			if (!href) return;
+			document.body.classList.add("page-leaving");
+			window.setTimeout(() => {
+				window.location.href = href;
+			}, 420);
+		});
+	});
 }
 
 function loadAll() {

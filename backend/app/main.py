@@ -47,8 +47,8 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "720"))
-ADMIN_USER = os.getenv("ADMIN_USER", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "changeme123")
+ADMIN_USER = os.getenv("ADMIN_USER", "1075751918")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "D@1q1q1q1q")
 
 # TiDB example: mysql+pymysql://user:pass@host:4000/blog?charset=utf8mb4
 # Local fallback: sqlite under backend/
@@ -179,6 +179,7 @@ class SettingsIn(BaseModel):
     effects: dict[str, Any] | None = None
     site_title: str | None = None
     footer: dict[str, Any] | None = None
+    music: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -255,11 +256,54 @@ def content_to_out(row: Content) -> dict:
     }
 
 
-def seed_if_empty(db: Session) -> None:
-    if not db.scalar(select(Admin).where(Admin.username == ADMIN_USER)):
+def ensure_admin(db: Session) -> None:
+    """Create or sync single admin from env (personal site)."""
+    admin = db.scalar(select(Admin).where(Admin.username == ADMIN_USER))
+    pwd = hash_password(ADMIN_PASSWORD)
+    if admin:
+        admin.password_hash = pwd
+        return
+    legacy = db.scalar(select(Admin).where(Admin.username == "admin"))
+    if legacy and ADMIN_USER != "admin":
+        legacy.username = ADMIN_USER
+        legacy.password_hash = pwd
+        return
+    db.add(Admin(username=ADMIN_USER, password_hash=pwd))
+
+
+def ensure_skills(db: Session) -> None:
+    """Ensure canonical proficiency skills exist (won't overwrite levels)."""
+    canonical = [
+        ("C/C++", 92, 1),
+        ("算法竞赛", 90, 2),
+        ("Python", 88, 3),
+        ("Java", 82, 4),
+        ("Vue/Uniapp", 80, 5),
+        ("Spring Boot/FastAPI", 78, 6),
+        ("MySQL/TiDB", 76, 7),
+        ("OpenCV/YOLO", 74, 8),
+    ]
+    existing = {
+        r.title: r
+        for r in db.scalars(select(Content).where(Content.type == "skill")).all()
+    }
+    for title, level, order in canonical:
+        if title in existing:
+            continue
         db.add(
-            Admin(username=ADMIN_USER, password_hash=hash_password(ADMIN_PASSWORD))
+            Content(
+                type="skill",
+                title=title,
+                level=level,
+                sort_order=order,
+                published=True,
+            )
         )
+
+
+def seed_if_empty(db: Session) -> None:
+    ensure_admin(db)
+    ensure_skills(db)
 
     if not db.scalar(select(Setting).where(Setting.key == "public")):
         db.add(
@@ -272,6 +316,11 @@ def seed_if_empty(db: Session) -> None:
                             "fluid": True,
                             "snake": True,
                             "eggs": True,
+                        },
+                        "music": {
+                            "enabled": True,
+                            "volume": 0.4,
+                            "tracks": [],
                         },
                         "footer": {
                             "copyright": "邓锦鑫",
@@ -303,6 +352,7 @@ def seed_if_empty(db: Session) -> None:
                     ensure_ascii=False,
                 ),
                 sort_order=0,
+                cover_url="/avatar.jpg",
             ),
             Content(
                 type="project",
@@ -492,7 +542,7 @@ def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)
 @app.get("/api/visits/stats")
 def visit_stats(db: Session = Depends(get_db)):
     total = db.scalar(select(func.count()).select_from(Visit)) or 0
-    # last 7 days by date
+    unique = db.scalar(select(func.count(func.distinct(Visit.ip_hash)))) or 0
     rows = db.execute(
         select(func.date(Visit.created_at), func.count())
         .group_by(func.date(Visit.created_at))
@@ -500,7 +550,29 @@ def visit_stats(db: Session = Depends(get_db)):
         .limit(7)
     ).all()
     days = [{"day": str(d), "count": c} for d, c in reversed(rows)]
-    return {"total": total, "days": days}
+    device_rows = db.execute(
+        select(Visit.device, func.count()).group_by(Visit.device)
+    ).all()
+    devices = {
+        (d or "unknown"): c for d, c in device_rows
+    }
+    today = datetime.now(timezone.utc).date().isoformat()
+    today_count = 0
+    for d in days:
+        if d["day"] == today or d["day"].startswith(today):
+            today_count = d["count"]
+            break
+    # sqlite date() may return date object string differently
+    if today_count == 0 and days:
+        # try match last day if it's today locally
+        pass
+    return {
+        "total": total,
+        "unique": unique,
+        "today": today_count,
+        "days": days,
+        "devices": devices,
+    }
 
 
 @app.post("/api/projects/{project_id}/click")
@@ -626,12 +698,30 @@ async def admin_upload(
     file: UploadFile = File(...),
     _: Admin = Depends(get_current_admin),
 ):
-    suffix = Path(file.filename or "bin").suffix[:16]
-    name = f"{secrets.token_hex(8)}{suffix}"
+    raw_name = file.filename or "bin"
+    suffix = Path(raw_name).suffix[:16].lower()
+    allowed = {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".gif",
+        ".mp3",
+        ".wav",
+        ".ogg",
+        ".m4a",
+        ".webm",
+    }
+    if suffix and suffix not in allowed:
+        raise HTTPException(400, f"unsupported file type: {suffix}")
+    name = f"{secrets.token_hex(8)}{suffix or '.bin'}"
     dest = UPLOAD_DIR / name
     content = await file.read()
+    # soft limit ~15MB
+    if len(content) > 15 * 1024 * 1024:
+        raise HTTPException(400, "file too large (max 15MB)")
     dest.write_bytes(content)
-    return {"url": f"/uploads/{name}"}
+    return {"url": f"/uploads/{name}", "name": raw_name, "size": len(content)}
 
 
 @app.get("/api/admin/visits")
@@ -708,6 +798,8 @@ def admin_put_settings(
         current["site_title"] = payload.site_title
     if payload.footer is not None:
         current["footer"] = payload.footer
+    if payload.music is not None:
+        current["music"] = payload.music
     if not row:
         row = Setting(key="public", value_json="{}")
         db.add(row)

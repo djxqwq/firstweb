@@ -1,8 +1,8 @@
-@color-link: #5f5f5f;
-@color-link-hover: #5f5f5f;
-@color-enter: #fff;
-@color-title: #fff;
-@color-content: #222325;
+@color-link: #a78bfa;
+@color-link-hover: #67e8f9;
+@color-enter: #e9d5ff;
+@color-title: #f5f3ff;
+@color-content: #030014;
 @font-alt: 200 6vw/1 'Comic Sans MS', 'Helvetica Neue', 'Microsoft Yahei',
 	'Microsoft Yahei', -apple-system, sans-serif;
 
@@ -24,4 +24,15 @@
 		opacity: 1;
 		transform: none;
 	}
+}
+
+body.page-leaving {
+	opacity: 0;
+	transition: opacity 0.4s ease;
+	background: #030014 !important;
+}
+
+html,
+body {
+	background: #030014;
 }

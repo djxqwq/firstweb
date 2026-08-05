@@ -21,14 +21,14 @@
     },
     "ul": {
       "first": {
-        "href": "http://127.0.0.1:3000/",
+        "href": "http://127.0.0.1:3000/#projects",
         "icon": "bokeyuan",
         "text": "作品集"
       },
       "second": {
-        "href": "http://127.0.0.1:3000/#about-me",
+        "href": "https://blog.csdn.net/2302_79866931",
         "icon": "xiaolian",
-        "text": "关于我"
+        "text": "技术博客"
       },
       "third": {
         "href": "mailto:1075751918@qq.com",

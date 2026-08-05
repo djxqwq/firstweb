@@ -9,7 +9,7 @@
 			- const { first , second , third, fourth } = main.ul
 			ul
 				li
-					a(href=`${first.href}` aria-label=`${first.text}` target="_blank" rel="noopener noreferrer")
+					a.site-link(href=`${first.href}` aria-label=`${first.text}` data-same-site="true")
 						i(class=`icon icon-${first.icon}`)
 						span(data-translate=`${first.text}`) #{first.text}
 
@@ -19,12 +19,12 @@
 						span(data-translate=`${second.text}`) #{second.text}
 
 				li
-					a(href=`${third.href}` aria-label=`${third.text}` target="_blank")
+					a(href=`${third.href}` aria-label=`${third.text}`)
 						i(class=`icon icon-${third.icon}`)
 						span(data-translate=`${third.text}`) #{third.text}
 
 				li
-					a(href=`${fourth.href}` aria-label=`${fourth.text}` target="_blank")
+					a(href=`${fourth.href}` aria-label=`${fourth.text}` target="_blank" rel="noopener noreferrer")
 						i(class=`icon icon-${fourth.icon}`)
 						span(data-translate=`${fourth.text}`) #{fourth.text}
 
