@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Boot — 邓锦鑫</title>
+  <meta name="theme-color" content="#030014" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles/styles.css" />
+  <link rel="stylesheet" href="./theme-site.css" />
+</head>
+<body>
+  <div id="preloader" class="preloader-overlay" role="alertdialog" aria-modal="true"
+    aria-labelledby="glitch-title" aria-describedby="loading-description" aria-live="polite">
+    <div class="scanline" aria-hidden="true"></div>
+    <div class="noise" aria-hidden="true"></div>
+    <div class="bg-grid" aria-hidden="true"></div>
+
+    <div class="loader-content">
+      <div class="header-line" role="status">
+        <div class="left-header">
+          <span class="status-label">SYS.STATUS:</span>
+          <span id="status-text" class="status-value">INITIALIZING</span>
+        </div>
+        <div class="right-header">
+          <span class="threat-label">SIGNAL:</span>
+          <span id="threat-level" class="threat-value" role="status">LOW</span>
+        </div>
+      </div>
+
+      <div class="main-display">
+        <h1 id="glitch-title" class="glitch" data-text="DENG_JINXIN">DENG_JINXIN</h1>
+        <p id="loading-description" class="sr-only">
+          正在加载。可按 Enter / Esc 跳过。
+        </p>
+        <div class="terminal-output">
+          <p>
+            <span class="prompt" aria-hidden="true">&gt;</span>
+            <span id="typing-text" aria-live="polite">INITIALIZING KERNEL...</span>
+            <span class="cursor" aria-hidden="true">_</span>
+          </p>
+          <p class="sub-text">全栈 · 算法 · 人工智能</p>
+        </div>
+      </div>
+
+      <div class="progress-container" role="progressbar" aria-label="Loading progress">
+        <div class="progress-bar-bg">
+          <div id="progress-bar" class="progress-bar-fill" aria-hidden="true"></div>
+        </div>
+        <div class="progress-stats">
+          <span id="percent-text">0%</span>
+          <span class="hex-code" id="hex-code">0x0000</span>
+        </div>
+      </div>
+
+      <div class="skip-container" id="skip-container">
+        <button id="skip-btn" class="skip-btn" type="button" aria-label="跳过开场动画">
+          SKIP [ENTER]
+        </button>
+      </div>
+    </div>
+
+    <div class="signature" aria-hidden="true">
+      <span class="sig-bracket">[</span> SystemBreach · MIT <span class="sig-bracket">]</span>
+    </div>
+  </div>
+
+  <!-- Required by original preloader API; stays hidden in iframe -->
+  <main id="main-content" class="main-content" style="display:none" aria-hidden="true"></main>
+  <script src="./static/main.js"></script>
+</body>
+</html>

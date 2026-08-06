@@ -1,0 +1,49 @@
+/* Site brand remapping over SystemBreach defaults */
+:root {
+  --bg-color: #030014;
+  --main-red: #c084fc;
+  --dark-red: #7c3aed;
+  --dim-red: #4c1d95;
+  --text-color: #e9d5ff;
+  --text-secondary: #a5f3fc;
+  --cursor-color: #22d3ee;
+  --focus-ring-color: #22d3ee;
+}
+
+html,
+body {
+  background: #030014 !important;
+  margin: 0;
+  overflow: hidden !important;
+}
+
+.preloader-overlay {
+  background:
+    radial-gradient(ellipse at 50% 30%, rgba(112, 66, 248, 0.28), transparent 55%),
+    radial-gradient(ellipse at 80% 80%, rgba(34, 211, 238, 0.12), transparent 45%),
+    #030014 !important;
+}
+
+.progress-bar-fill {
+  background: linear-gradient(90deg, #7c3aed, #22d3ee) !important;
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.55) !important;
+}
+
+.threat-value.critical {
+  color: #22d3ee !important;
+  text-shadow: 0 0 12px rgba(34, 211, 238, 0.8);
+}
+
+.skip-btn:hover,
+.skip-btn:focus-visible {
+  border-color: #22d3ee !important;
+  color: #22d3ee !important;
+}
+
+.glitch::after {
+  text-shadow: -2px 0 #c084fc !important;
+}
+
+.glitch::before {
+  text-shadow: -2px 0 #22d3ee !important;
+}
