@@ -1,0 +1,33 @@
+services:
+  backend:
+    build: ./backend
+    container_name: blog-backend
+    env_file: ./backend/.env
+    volumes:
+      - backend-uploads:/app/uploads
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+    networks:
+      - blog-net
+
+  frontend:
+    build: ./frontend
+    container_name: blog-frontend
+    environment:
+      - NEXT_PUBLIC_API_BASE=
+      - NODE_ENV=production
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - blog-net
+
+volumes:
+  backend-uploads:
+
+networks:
+  blog-net:
+    driver: bridge

@@ -12,7 +12,16 @@ backend/.venv
 backend/__pycache__
 backend/app/__pycache__
 backend/data.db
+backend/uploads/
 uploads/
 *.db
 .env
+.env.local
 .next
+
+# Docker
+*.tar
+
+# Deploy
+nginx/letsencrypt/
+deploy.local.sh

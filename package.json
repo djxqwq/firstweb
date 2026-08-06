@@ -3,10 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev:home": "npm run dev --prefix home",
-    "dev:about": "npm run dev --prefix about-web",
-    "dev:api": "cd backend && .venv\\Scripts\\python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000",
-    "build:home": "npm run build --prefix home",
-    "build:about": "npm run build --prefix about-web"
+    "dev": "scripts\\start.bat",
+    "dev:site": "npm run dev --prefix frontend -- -p 3000 -H 127.0.0.1",
+    "dev:api": "cd backend && .venv\\Scripts\\python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000"
   }
 }

@@ -61,7 +61,14 @@ UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=connect_args)
+# TiDB Cloud / MySQL 强制 SSL
+if DATABASE_URL.startswith("mysql"):
+    import ssl as _ssl
+    _ssl_ctx = _ssl.create_default_context()
+    _ssl_ctx.check_hostname = False
+    _ssl_ctx.verify_mode = _ssl.CERT_NONE
+    connect_args = {"ssl": _ssl_ctx}
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -422,9 +429,12 @@ def seed_if_empty(db: Session) -> None:
 # ---------------------------------------------------------------------------
 app = FastAPI(title="邓锦鑫个人技术博客 API", version="1.0.0")
 
+# CORS：生产环境从环境变量读取白名单，开发环境允许全部
+_cors_env = os.getenv("CORS_ORIGINS", "")
+_cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -435,6 +445,21 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 @app.on_event("startup")
 def on_startup() -> None:
+    # MySQL/TiDB: 自动创建数据库（如不存在）
+    if DATABASE_URL.startswith("mysql"):
+        from sqlalchemy.engine.url import make_url
+        url = make_url(DATABASE_URL)
+        db_name = url.database or "blog"
+        server_url = DATABASE_URL.rsplit(f"/{db_name}", 1)[0] + "/"
+        try:
+            server_engine = create_engine(server_url, connect_args=connect_args)
+            with server_engine.connect() as conn:
+                from sqlalchemy import text
+                conn.execute(text(f"CREATE DATABASE IF NOT EXISTS `{db_name}`"))
+            server_engine.dispose()
+        except Exception as e:
+            print(f"[warn] auto-create database failed: {e}")
+
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
