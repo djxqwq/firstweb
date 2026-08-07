@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import { slideInFromTop } from "@/lib/motion";
 
@@ -14,19 +14,47 @@ type Spark = {
   color: string;
 };
 
-type OrbitBadge = {
+interface MeshNode {
+  id: string;
   label: string;
   color: string;
-  angle: number;
-};
+  angle: number;   // degrees
+  radius: number;  // px from center
+  connections: string[];
+}
 
-const SECURITY_BADGES: OrbitBadge[] = [
-  { label: "JWT", color: "#22d3ee", angle: 0 },
-  { label: "bcrypt", color: "#a855f7", angle: 72 },
-  { label: "HTTPS", color: "#34d399", angle: 144 },
-  { label: "CORS", color: "#f472b6", angle: 216 },
-  { label: "OAuth2", color: "#fbbf24", angle: 288 },
+/* ---------- 技术栈网状节点 ---------- */
+const MESH_NODES: MeshNode[] = [
+  { id: "cpp",      label: "C/C++",       color: "#22d3ee", angle: 0,    radius: 155, connections: ["python","java","opencv"] },
+  { id: "python",   label: "Python",      color: "#fbbf24", angle: 26,   radius: 130, connections: ["cpp","opencv","yolo","fastapi"] },
+  { id: "java",     label: "Java",        color: "#f472b6", angle: -26,  radius: 140, connections: ["cpp","springboot"] },
+  { id: "opencv",   label: "OpenCV",      color: "#34d399", angle: 52,   radius: 160, connections: ["cpp","python","yolo"] },
+  { id: "yolo",     label: "YOLO",        color: "#a855f7", angle: 78,   radius: 145, connections: ["python","opencv"] },
+  { id: "spring",   label: "SpringBoot",  color: "#fb923c", angle: -52,  radius: 150, connections: ["java","mysql"] },
+  { id: "fastapi",  label: "FastAPI",     color: "#22d3ee", angle: 104,  radius: 135, connections: ["python","docker","tidb"] },
+  { id: "mysql",    label: "MySQL",       color: "#fbbf24", angle: -78,  radius: 155, connections: ["spring","tidb"] },
+  { id: "tidb",     label: "TiDB",        color: "#a855f7", angle: -104, radius: 140, connections: ["mysql","fastapi","docker"] },
+  { id: "docker",   label: "Docker",      color: "#38bdf8", angle: 130,  radius: 150, connections: ["fastapi","tidb","nginx"] },
+  { id: "nginx",    label: "Nginx",       color: "#34d399", angle: -130, radius: 145, connections: ["docker","git"] },
+  { id: "git",      label: "Git",         color: "#f472b6", angle: 156,  radius: 130, connections: ["nginx","react"] },
+  { id: "react",    label: "React/Next",  color: "#22d3ee", angle: -156, radius: 150, connections: ["git","vue"] },
+  { id: "vue",      label: "Vue/Uniapp",  color: "#34d399", angle: 182,  radius: 140, connections: ["react"] },
 ];
+
+/* ---------- 预计算连线（去重） ---------- */
+function buildLineSegments() {
+  const map = new Map(MESH_NODES.map((n) => [n.id, n]));
+  const segments: { from: MeshNode; to: MeshNode }[] = [];
+  for (const node of MESH_NODES) {
+    for (const cid of node.connections) {
+      const target = map.get(cid);
+      if (!target) continue;
+      if (segments.some((s) => (s.from.id === target.id && s.to.id === node.id))) continue;
+      segments.push({ from: node, to: target });
+    }
+  }
+  return segments;
+}
 
 /* ---------- component ---------- */
 export const Encryption = () => {
@@ -37,6 +65,8 @@ export const Encryption = () => {
   const sparkId = useRef(0);
   const sparkRaf = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const lineSegments = useMemo(buildLineSegments, []);
 
   /* ---- spark engine ---- */
   const runSparks = useCallback((initial: Spark[]) => {
@@ -87,7 +117,6 @@ export const Encryption = () => {
     const r = containerRef.current.getBoundingClientRect();
     const cx = r.left + r.width / 2;
     const cy = r.top + r.height / 2;
-    // we offset the whole container via CSS transform for the magnetic effect
     const dx = (e.clientX - cx) * 0.12;
     const dy = (e.clientY - cy) * 0.12;
     containerRef.current.style.transform = `translate(${dx}px, ${dy}px)`;
@@ -139,31 +168,71 @@ export const Encryption = () => {
 
       {/* lock area */}
       <div className="relative z-10 flex flex-col items-center">
-        {/* orbiting badges — unlocked only */}
+        {/* ====== 网状技术栈（解锁后出现） ====== */}
         <AnimatePresence>
           {open && (
             <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-              {SECURITY_BADGES.map((b) => {
-                const rad = (b.angle * Math.PI) / 180;
-                const orbitRadius = 130;
-                const x = Math.cos(rad) * orbitRadius;
-                const y = Math.sin(rad) * orbitRadius;
+              {/* ---- SVG 连线层 ---- */}
+              <svg
+                viewBox="-220 -220 440 440"
+                className="absolute left-1/2 top-1/2 h-[440px] w-[440px] -translate-x-1/2 -translate-y-1/2"
+                style={{ overflow: "visible" }}
+              >
+                {lineSegments.map((seg, i) => {
+                  const fr = (seg.from.angle * Math.PI) / 180;
+                  const tr = (seg.to.angle * Math.PI) / 180;
+                  const x1 = Math.cos(fr) * seg.from.radius;
+                  const y1 = Math.sin(fr) * seg.from.radius;
+                  const x2 = Math.cos(tr) * seg.to.radius;
+                  const y2 = Math.sin(tr) * seg.to.radius;
+                  return (
+                    <motion.path
+                      key={`${seg.from.id}-${seg.to.id}`}
+                      d={`M ${x1} ${y1} L ${x2} ${y2}`}
+                      fill="none"
+                      stroke={seg.from.color}
+                      strokeWidth="1.2"
+                      strokeOpacity="0.35"
+                      initial={{ opacity: 0, pathLength: 0 }}
+                      animate={{ opacity: 1, pathLength: 1 }}
+                      exit={{ opacity: 0, pathLength: 0 }}
+                      transition={{
+                        delay: 0.25 + i * 0.04,
+                        duration: 0.6,
+                        ease: "easeInOut",
+                      }}
+                      style={{ filter: `drop-shadow(0 0 3px ${seg.from.color}44)` }}
+                    />
+                  );
+                })}
+              </svg>
+
+              {/* ---- 节点层 ---- */}
+              {MESH_NODES.map((node, i) => {
+                const rad = (node.angle * Math.PI) / 180;
+                const x = Math.cos(rad) * node.radius;
+                const y = Math.sin(rad) * node.radius;
                 return (
                   <motion.span
-                    key={b.label}
-                    initial={{ opacity: 0, x: 0, y: 0 }}
-                    animate={{ opacity: 1, x, y }}
-                    exit={{ opacity: 0, x: 0, y: 0 }}
-                    transition={{ type: "spring", stiffness: 120, damping: 14, delay: 0.1 }}
-                    className="absolute left-0 top-0 -translate-x-1/2 -translate-y-1/2 rounded-full border px-3 py-1 text-[11px] font-bold backdrop-blur-sm"
+                    key={node.id}
+                    initial={{ opacity: 0, scale: 0, x: 0, y: 0 }}
+                    animate={{ opacity: 1, scale: 1, x, y }}
+                    exit={{ opacity: 0, scale: 0, x: 0, y: 0 }}
+                    transition={{
+                      type: "spring",
+                      stiffness: 180,
+                      damping: 16,
+                      delay: 0.35 + i * 0.055,
+                    }}
+                    className="absolute left-0 top-0 -translate-x-1/2 -translate-y-1/2 rounded-full border px-3 py-1 text-[11px] font-semibold backdrop-blur-sm whitespace-nowrap"
                     style={{
-                      color: b.color,
-                      borderColor: `${b.color}55`,
-                      background: `${b.color}15`,
-                      boxShadow: `0 0 10px ${b.color}33`,
+                      color: node.color,
+                      borderColor: `${node.color}66`,
+                      background: `${node.color}14`,
+                      boxShadow: `0 0 12px ${node.color}33`,
                     }}
                   >
-                    {b.label}
+                    {node.label}
                   </motion.span>
                 );
               })}
@@ -179,7 +248,7 @@ export const Encryption = () => {
           onPointerLeave={resetMagnetic}
           className="relative transition-transform duration-200 ease-out"
         >
-          {/* pulse rings */}
+          {/* pulse rings — hover */}
           <AnimatePresence>
             {hover && !open &&
               [0, 1].map((i) => (
@@ -193,6 +262,7 @@ export const Encryption = () => {
                 />
               ))}
           </AnimatePresence>
+          {/* pulse rings — open */}
           <AnimatePresence>
             {open &&
               [0, 1, 2].map((i) => (
@@ -297,7 +367,7 @@ export const Encryption = () => {
                   fill={open ? "#22d3ee" : "#a0a0c0"}
                   opacity="0.7"
                 />
-                {/* center dot */}
+                {/* center dot — pulsing when unlocked */}
                 {open && (
                   <motion.circle
                     cx="32" cy="22" r="3"
@@ -329,7 +399,7 @@ export const Encryption = () => {
           transition={{ duration: 0.4 }}
         >
           <span className={open ? "text-cyan-300" : "text-gray-300"}>
-            {open ? "解锁 · 安全技术栈" : "点击解锁 · 查看安全实践"}
+            {open ? "解锁 · 技术栈网络" : "点击解锁 · 查看技术栈"}
           </span>
         </motion.div>
       </div>
