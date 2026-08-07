@@ -12,6 +12,7 @@ import io
 import json
 import os
 import secrets
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -133,6 +134,28 @@ class ProjectClick(Base):
     count = Column(Integer, default=0)
 
 
+class VisitorNote(Base):
+    """访客备注 —— 给某个 ip_hash 打标签/备注，方便识别回头客。"""
+    __tablename__ = "visitor_notes"
+    id = Column(Integer, primary_key=True, index=True)
+    ip_hash = Column(String(64), unique=True, index=True, nullable=False)
+    note = Column(Text, default="")
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class MessageLike(Base):
+    """留言点赞 —— 用 ip_hash 防重复点赞。"""
+    __tablename__ = "message_likes"
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, index=True, nullable=False)
+    ip_hash = Column(String(64), default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class AdminLogin(Base):
     """Admin 登录审计记录 —— 追踪哪些设备登录过后台。"""
     __tablename__ = "admin_logins"
@@ -185,6 +208,10 @@ class ContentOut(BaseModel):
 class MessageIn(BaseModel):
     name: str = "visitor"
     content: str
+
+
+class VisitorNoteIn(BaseModel):
+    note: str = ""
 
 
 class VisitIn(BaseModel):
@@ -536,6 +563,11 @@ def get_skills(db: Session = Depends(get_db)):
     return list_by_type(db, "skill")
 
 
+@app.get("/api/internships")
+def get_internships(db: Session = Depends(get_db)):
+    return list_by_type(db, "internship")
+
+
 @app.get("/api/settings/public")
 def get_public_settings(db: Session = Depends(get_db)):
     row = db.scalar(select(Setting).where(Setting.key == "public"))
@@ -561,30 +593,141 @@ def post_message(payload: MessageIn, db: Session = Depends(get_db)):
 
 
 @app.get("/api/messages")
-def list_messages(db: Session = Depends(get_db), limit: int = 30):
-    """公开留言墙：返回最近 published 留言（含管理员回复），按时间倒序。"""
-    rows = db.scalars(
+def list_messages(
+    request: Request,
+    db: Session = Depends(get_db),
+    page: int = 1,
+    size: int = 10,
+):
+    """公开留言墙：分页 + 树形（主留言含 replies），含点赞数与当前用户点赞状态。"""
+    size = min(max(size, 1), 50)
+    page = max(page, 1)
+    all_rows = db.scalars(
         select(Content)
         .where(Content.type == "message", Content.published.is_(True))
         .order_by(Content.id.desc())
-        .limit(min(max(limit, 1), 100))
+        .limit(500)
     ).all()
-    out = []
-    for r in rows:
+
+    msg_ids = [r.id for r in all_rows]
+    # 点赞数
+    like_counts: dict[int, int] = {}
+    # 当前用户是否点赞
+    liked_ids: set[int] = set()
+    ip = get_client_ip(request)
+    my_hash = hashlib.sha256(ip.encode()).hexdigest()[:16]
+    if msg_ids:
+        like_rows = db.execute(
+            select(MessageLike.message_id, func.count())
+            .where(MessageLike.message_id.in_(msg_ids))
+            .group_by(MessageLike.message_id)
+        ).all()
+        like_counts = {mid: cnt for mid, cnt in like_rows}
+        liked_ids = set(
+            db.scalars(
+                select(MessageLike.message_id).where(
+                    MessageLike.message_id.in_(msg_ids),
+                    MessageLike.ip_hash == my_hash,
+                )
+            ).all()
+        )
+
+    mains: list[dict] = []
+    replies_by_parent: dict[int, list[dict]] = {}
+    for r in all_rows:
         body = _loads(r.body_json, {})
         if not isinstance(body, dict):
             body = {}
-        out.append(
-            {
-                "id": r.id,
-                "name": r.title or "visitor",
-                "content": r.summary or "",
-                "is_admin": bool(body.get("is_admin", False)),
-                "reply_to": body.get("reply_to"),
-                "created_at": (r.created_at.isoformat() + "Z") if r.created_at else None,
-            }
+        item = {
+            "id": r.id,
+            "name": r.title or "visitor",
+            "content": r.summary or "",
+            "is_admin": bool(body.get("is_admin", False)),
+            "reply_to": body.get("reply_to"),
+            "created_at": (r.created_at.isoformat() + "Z")
+            if r.created_at
+            else None,
+            "likes": like_counts.get(r.id, 0),
+            "liked": r.id in liked_ids,
+        }
+        rt = item["reply_to"]
+        if rt:
+            replies_by_parent.setdefault(rt, []).append(item)
+        else:
+            mains.append(item)
+
+    total = len(mains)
+    start = (page - 1) * size
+    page_mains = mains[start : start + size]
+    for m in page_mains:
+        reps = replies_by_parent.get(m["id"], [])
+        reps.sort(key=lambda x: x["id"])
+        m["replies"] = reps
+    return {
+        "items": page_mains,
+        "total": total,
+        "page": page,
+        "size": size,
+        "has_more": start + size < total,
+    }
+
+
+@app.post("/api/messages/{message_id}/like")
+def like_message(
+    message_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """点赞 / 取消点赞（同 IP 切换），返回最新点赞数。"""
+    ip = get_client_ip(request)
+    ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:16]
+    existing = db.scalar(
+        select(MessageLike).where(
+            MessageLike.message_id == message_id,
+            MessageLike.ip_hash == ip_hash,
         )
-    return out
+    )
+    if existing:
+        db.delete(existing)
+        db.commit()
+        liked = False
+    else:
+        db.add(MessageLike(message_id=message_id, ip_hash=ip_hash))
+        db.commit()
+        liked = True
+    count = (
+        db.scalar(
+            select(func.count())
+            .select_from(MessageLike)
+            .where(MessageLike.message_id == message_id)
+        )
+        or 0
+    )
+    return {"ok": True, "liked": liked, "likes": count}
+
+
+@app.post("/api/messages/{message_id}/reply")
+def reply_message(
+    message_id: int, payload: MessageIn, db: Session = Depends(get_db)
+):
+    """访客公开回复留言（挂在父留言下，嵌套显示）。"""
+    parent = db.get(Content, message_id)
+    if not parent or parent.type != "message":
+        raise HTTPException(404, "message not found")
+    db.add(
+        Content(
+            type="message",
+            title=(payload.name or "visitor")[:64],
+            summary=payload.content[:2000],
+            body_json=json.dumps(
+                {"is_admin": False, "reply_to": message_id}, ensure_ascii=False
+            ),
+            published=True,
+            sort_order=0,
+        )
+    )
+    db.commit()
+    return {"ok": True}
 
 
 class ReplyIn(BaseModel):
@@ -657,6 +800,78 @@ def detect_device(ua: str) -> str:
     return "desktop"
 
 
+def lookup_ip_geo(ip: str) -> dict:
+    """通过 ip-api.com 免费查询 IP 地理位置（限 45 次/分钟，无需密钥）。
+
+    本地/内网 IP 直接返回空字典，不发起外网请求。
+    """
+    if not ip or ip in ("127.0.0.1", "localhost", "::1", ""):
+        return {}
+    # 内网网段不查询
+    if ip.startswith(("10.", "172.", "192.168.", "169.254.")):
+        return {}
+    try:
+        url = (
+            f"http://ip-api.com/json/{ip}"
+            "?lang=zh-CN&fields=status,country,regionName,city,isp,query"
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if data.get("status") == "success":
+            return {
+                "country": data.get("country", ""),
+                "region": data.get("regionName", ""),
+                "city": data.get("city", ""),
+                "isp": data.get("isp", ""),
+            }
+    except Exception:
+        pass
+    return {}
+
+
+def parse_browser_os(ua: str) -> dict:
+    """从 User-Agent 字符串解析浏览器和操作系统。"""
+    ua = ua or ""
+    # 操作系统
+    os_name = "未知"
+    if "Windows NT 10" in ua:
+        os_name = "Windows 10/11"
+    elif "Windows NT 6.3" in ua:
+        os_name = "Windows 8.1"
+    elif "Windows NT 6.1" in ua:
+        os_name = "Windows 7"
+    elif "Mac OS X" in ua or "Macintosh" in ua:
+        os_name = "macOS"
+    elif "Android" in ua:
+        # 尝试提取版本号
+        ver = ""
+        if "Android " in ua:
+            ver = ua.split("Android ")[1].split(";")[0].strip()
+        os_name = f"Android{(' ' + ver) if ver else ''}"
+    elif "iPhone" in ua or "iPad" in ua:
+        os_name = "iOS"
+    elif "Linux" in ua:
+        os_name = "Linux"
+
+    # 浏览器（注意顺序：Edge/Opera 要在 Chrome 前判断）
+    browser = "未知"
+    if "Edg/" in ua:
+        browser = "Edge"
+    elif "OPR/" in ua or "Opera" in ua:
+        browser = "Opera"
+    elif "Chrome/" in ua and "Chromium" not in ua:
+        browser = "Chrome"
+    elif "Firefox/" in ua:
+        browser = "Firefox"
+    elif "Safari/" in ua and "Chrome" not in ua:
+        browser = "Safari"
+    elif "MSIE" in ua or "Trident/" in ua:
+        browser = "IE"
+
+    return {"os": os_name, "browser": browser}
+
+
 # 同 IP + 同路径的去重窗口（秒）：窗口内重复访问不重复记录
 VISIT_DEDUP_SECONDS = 300
 
@@ -726,6 +941,29 @@ def visit_stats(db: Session = Depends(get_db)):
         "today": today_count,
         "days": days,
         "devices": devices,
+    }
+
+
+@app.get("/api/visits/myinfo")
+def visit_myinfo(request: Request):
+    """返回访客自己的 IP、地区、设备、浏览器、操作系统等信息。
+
+    公开接口，无需鉴权。访客可在前端看到自己的访问身份。
+    """
+    ip = get_client_ip(request)
+    ua = (request.headers.get("user-agent") or "")[:512]
+    geo = lookup_ip_geo(ip)
+    bo = parse_browser_os(ua)
+    return {
+        "ip": ip,
+        "country": geo.get("country", ""),
+        "region": geo.get("region", ""),
+        "city": geo.get("city", ""),
+        "isp": geo.get("isp", ""),
+        "device": detect_device(ua),
+        "os": bo["os"],
+        "browser": bo["browser"],
+        "ua": ua,
     }
 
 
@@ -928,6 +1166,102 @@ def admin_visits(
         }
         for r in rows
     ]
+
+
+@app.get("/api/admin/visitors")
+def admin_visitors(
+    db: Session = Depends(get_db), _: Admin = Depends(get_current_admin)
+):
+    """按 IP 聚合访客：每个 IP 一行，含访问次数/首末时间/备注/最新行为，按最后访问倒序。"""
+    rows = db.scalars(select(Visit).order_by(Visit.id.desc()).limit(3000)).all()
+    notes = {n.ip_hash: n.note for n in db.scalars(select(VisitorNote)).all()}
+    agg: dict[str, dict] = {}
+    for r in rows:
+        key = r.ip_hash or "unknown"
+        a = agg.get(key)
+        if a is None:
+            a = {
+                "ip_hash": key,
+                "note": notes.get(key, ""),
+                "count": 0,
+                "first_at": r.created_at,
+                "last_at": r.created_at,
+                "last_device": r.device,
+                "last_path": r.path,
+                "last_referrer": r.referrer,
+                "last_ua": r.ua,
+            }
+            agg[key] = a
+        a["count"] += 1
+        if r.created_at:
+            if a["first_at"] is None or r.created_at < a["first_at"]:
+                a["first_at"] = r.created_at
+            if r.created_at > a["last_at"]:
+                a["last_at"] = r.created_at
+                a["last_device"] = r.device
+                a["last_path"] = r.path
+                a["last_referrer"] = r.referrer
+                a["last_ua"] = r.ua
+    result = list(agg.values())
+    result.sort(key=lambda x: x["last_at"] or datetime.min, reverse=True)
+    for a in result:
+        a["first_at"] = (
+            a["first_at"].replace(tzinfo=timezone.utc).isoformat()
+            if a["first_at"]
+            else None
+        )
+        a["last_at"] = (
+            a["last_at"].replace(tzinfo=timezone.utc).isoformat()
+            if a["last_at"]
+            else None
+        )
+    return result
+
+
+@app.get("/api/admin/visitors/{ip_hash}/records")
+def admin_visitor_records(
+    ip_hash: str,
+    limit: int = 500,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(get_current_admin),
+):
+    """查看某个访客的所有访问记录（按时间倒序）。"""
+    rows = db.scalars(
+        select(Visit)
+        .where(Visit.ip_hash == ip_hash)
+        .order_by(Visit.id.desc())
+        .limit(min(max(limit, 1), 2000))
+    ).all()
+    return [
+        {
+            "id": r.id,
+            "ua": r.ua,
+            "path": r.path,
+            "referrer": r.referrer,
+            "device": r.device,
+            "created_at": r.created_at.replace(tzinfo=timezone.utc).isoformat()
+            if r.created_at
+            else None,
+        }
+        for r in rows
+    ]
+
+
+@app.put("/api/admin/visitors/{ip_hash}/note")
+def admin_visitor_note(
+    ip_hash: str,
+    payload: VisitorNoteIn,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(get_current_admin),
+):
+    """给某个访客 IP 设置备注。"""
+    existing = db.scalar(select(VisitorNote).where(VisitorNote.ip_hash == ip_hash))
+    if existing:
+        existing.note = payload.note[:500]
+    else:
+        db.add(VisitorNote(ip_hash=ip_hash, note=payload.note[:500]))
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/admin/login-records")

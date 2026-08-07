@@ -7,6 +7,7 @@ import { Encryption } from "@/components/main/encryption";
 import { FluidIntro } from "@/components/main/fluid-intro";
 import { Hero } from "@/components/main/hero";
 import { Honors } from "@/components/main/honors";
+import { Internship } from "@/components/main/internship";
 import { Projects } from "@/components/main/projects";
 import { Skills } from "@/components/main/skills";
 import { SnakeHub } from "@/components/main/snake-hub";
@@ -38,6 +39,7 @@ export default function Home() {
         <Encryption />
         <Projects />
         <Education />
+        <Internship />
         <Honors />
         <Contact />
       </div>

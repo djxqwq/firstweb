@@ -1,13 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  FormEvent,
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 const API = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
 const TYPES = [
   { key: "project", label: "项目" },
   { key: "education", label: "教育" },
+  { key: "internship", label: "实习" },
   { key: "honor", label: "荣誉" },
   { key: "skill", label: "技能" },
   { key: "profile", label: "个人信息" },
@@ -36,6 +44,18 @@ type VisitItem = {
   referrer: string;
   device: string;
   created_at: string | null;
+};
+
+type VisitorAgg = {
+  ip_hash: string;
+  note: string;
+  count: number;
+  first_at: string | null;
+  last_at: string | null;
+  last_device: string;
+  last_path: string;
+  last_referrer: string;
+  last_ua: string;
 };
 
 type VisitStats = {
@@ -161,6 +181,12 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [visitQ, setVisitQ] = useState("");
   const [visitDevice, setVisitDevice] = useState("all");
+  const [visitors, setVisitors] = useState<VisitorAgg[]>([]);
+  const [selectedIp, setSelectedIp] = useState<string | null>(null);
+  const [visitorRecords, setVisitorRecords] = useState<VisitItem[]>([]);
+  const [noteEditingIp, setNoteEditingIp] = useState<string | null>(null);
+  const [noteText, setNoteText] = useState("");
+  const [loadingRecords, setLoadingRecords] = useState(false);
   const [siteTitle, setSiteTitle] = useState("个人技术博客");
   const [uploading, setUploading] = useState(false);
   const [musicEnabled, setMusicEnabled] = useState(true);
@@ -234,7 +260,7 @@ export default function AdminPage() {
   const loadVisits = useCallback(async () => {
     if (!token) return;
     const [vRes, sRes] = await Promise.all([
-      fetch(`${API}/api/admin/visits?limit=200`, {
+      fetch(`${API}/api/admin/visitors`, {
         headers: authHeaders(token),
       }),
       fetch(`${API}/api/visits/stats`),
@@ -243,9 +269,63 @@ export default function AdminPage() {
       logout();
       return;
     }
-    if (vRes.ok) setVisits(await vRes.json());
+    if (vRes.ok) setVisitors(await vRes.json());
     if (sRes.ok) setStats(await sRes.json());
   }, [token, logout]);
+
+  const loadVisitorRecords = useCallback(
+    async (ipHash: string) => {
+      if (!token) return;
+      setLoadingRecords(true);
+      try {
+        const res = await fetch(
+          `${API}/api/admin/visitors/${encodeURIComponent(
+            ipHash
+          )}/records?limit=500`,
+          { headers: authHeaders(token) }
+        );
+        if (res.status === 401) {
+          logout();
+          return;
+        }
+        if (res.ok) setVisitorRecords(await res.json());
+      } finally {
+        setLoadingRecords(false);
+      }
+    },
+    [token, logout]
+  );
+
+  const saveNote = async (ipHash: string) => {
+    if (!token) return;
+    const res = await fetch(
+      `${API}/api/admin/visitors/${encodeURIComponent(ipHash)}/note`,
+      {
+        method: "PUT",
+        headers: authHeaders(token),
+        body: JSON.stringify({ note: noteText }),
+      }
+    );
+    if (res.status === 401) {
+      logout();
+      return;
+    }
+    if (res.ok) {
+      setNoteEditingIp(null);
+      setVisitors((prev) =>
+        prev.map((v) =>
+          v.ip_hash === ipHash ? { ...v, note: noteText } : v
+        )
+      );
+      setOkMsg("备注已保存");
+    }
+  };
+
+  const openVisitor = (ipHash: string) => {
+    setSelectedIp(selectedIp === ipHash ? null : ipHash);
+    setVisitorRecords([]);
+    if (selectedIp !== ipHash) loadVisitorRecords(ipHash);
+  };
 
   const loadLoginRecords = useCallback(async () => {
     if (!token) return;
@@ -372,19 +452,20 @@ export default function AdminPage() {
     setForm({ ...form, links: JSON.stringify({ related: next }) });
   };
 
-  const filteredVisits = useMemo(() => {
-    return visits.filter((v) => {
-      if (visitDevice !== "all" && v.device !== visitDevice) return false;
+  const filteredVisitors = useMemo(() => {
+    return visitors.filter((v) => {
+      if (visitDevice !== "all" && v.last_device !== visitDevice)
+        return false;
       if (!visitQ.trim()) return true;
       const q = visitQ.toLowerCase();
       return (
-        v.path.toLowerCase().includes(q) ||
-        (v.referrer || "").toLowerCase().includes(q) ||
-        (v.ua || "").toLowerCase().includes(q) ||
-        (v.ip_hash || "").toLowerCase().includes(q)
+        (v.ip_hash || "").toLowerCase().includes(q) ||
+        (v.note || "").toLowerCase().includes(q) ||
+        (v.last_path || "").toLowerCase().includes(q) ||
+        (v.last_ua || "").toLowerCase().includes(q)
       );
     });
-  }, [visits, visitQ, visitDevice]);
+  }, [visitors, visitQ, visitDevice]);
 
   const uploadCover = async (file: File) => {
     setUploading(true);
@@ -794,7 +875,7 @@ export default function AdminPage() {
             <div className="flex flex-wrap gap-2">
               <input
                 className="min-w-[200px] flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:border-cyan-400/40"
-                placeholder="搜索路径 / UA / IP Hash / 来源"
+                placeholder="搜索 IP / 备注 / 路径"
                 value={visitQ}
                 onChange={(e) => setVisitQ(e.target.value)}
               />
@@ -808,7 +889,7 @@ export default function AdminPage() {
                 <option value="mobile">mobile</option>
               </select>
               <span className="self-center text-xs text-gray-500">
-                显示 {filteredVisits.length} / {visits.length}
+                {filteredVisitors.length} / {visitors.length} 位访客
               </span>
               <button
                 type="button"
@@ -823,85 +904,207 @@ export default function AdminPage() {
               <table className="min-w-full text-left text-sm">
                 <thead className="border-b border-white/10 text-xs text-gray-500">
                   <tr>
-                    <th className="px-4 py-3">时间</th>
                     <th className="px-4 py-3">访客</th>
+                    <th className="px-4 py-3">备注</th>
+                    <th className="px-4 py-3">次数</th>
+                    <th className="px-4 py-3">最后访问</th>
                     <th className="px-4 py-3">设备</th>
-                    <th className="px-4 py-3">路径</th>
-                    <th className="px-4 py-3">来源</th>
-                    <th className="px-4 py-3">环境</th>
+                    <th className="px-4 py-3">最后路径</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredVisits.map((v) => {
-                    const recent = isRecent(v.created_at);
+                  {filteredVisitors.map((v) => {
                     const vc = hashColor(v.ip_hash);
+                    const isOpen = selectedIp === v.ip_hash;
+                    const recent = isRecent(v.last_at);
                     return (
-                      <tr
-                        key={v.id}
-                        className={`border-b border-white/5 text-gray-300 ${
-                          recent ? "bg-emerald-500/[0.07]" : ""
-                        }`}
-                      >
-                        <td className="whitespace-nowrap px-4 py-2 text-xs">
-                          {v.created_at
-                            ? new Date(v.created_at).toLocaleString("zh-CN", {
-                                hour12: false,
-                                month: "2-digit",
-                                day: "2-digit",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })
-                            : "—"}
-                          {recent && (
+                      <Fragment key={v.ip_hash}>
+                        <tr
+                          className={`cursor-pointer border-b border-white/5 text-gray-300 transition hover:bg-white/[0.03] ${
+                            isOpen ? "bg-cyan-500/[0.06]" : ""
+                          } ${recent ? "bg-emerald-500/[0.05]" : ""}`}
+                          onClick={() => openVisitor(v.ip_hash)}
+                        >
+                          <td className="px-4 py-3">
                             <span
-                              className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"
-                              title="新访客"
-                            />
-                          )}
-                        </td>
-                        <td className="px-4 py-2">
-                          <span
-                            className="inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[11px]"
-                            style={{
-                              color: vc,
-                              background: `${vc}1a`,
-                              border: `1px solid ${vc}40`,
-                            }}
-                            title={v.ip_hash}
-                          >
-                            {v.ip_hash ? v.ip_hash.slice(0, 6) : "—"}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2">
-                          <span
-                            className={`rounded px-2 py-0.5 text-xs ${
-                              v.device === "mobile"
-                                ? "bg-amber-500/15 text-amber-200"
-                                : "bg-emerald-500/15 text-emerald-200"
-                            }`}
-                          >
-                            {v.device || "—"}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2 text-xs">
-                          {parsePath(v.path)}
-                        </td>
-                        <td className="px-4 py-2 text-xs text-gray-400">
-                          {parseReferrer(v.referrer)}
-                        </td>
-                        <td className="px-4 py-2 text-xs text-gray-400">
-                          {parseUA(v.ua)}
-                        </td>
-                      </tr>
+                              className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-mono text-[11px]"
+                              style={{
+                                color: vc,
+                                background: `${vc}1a`,
+                                border: `1px solid ${vc}40`,
+                              }}
+                              title={v.ip_hash}
+                            >
+                              {v.ip_hash ? v.ip_hash.slice(0, 8) : "—"}
+                              {recent && (
+                                <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                              )}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-gray-400">
+                            {noteEditingIp === v.ip_hash ? (
+                              <span
+                                className="flex items-center gap-1"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <input
+                                  value={noteText}
+                                  onChange={(e) =>
+                                    setNoteText(e.target.value)
+                                  }
+                                  className="w-32 rounded border border-cyan-400/40 bg-black/40 px-2 py-0.5 text-xs outline-none"
+                                  placeholder="备注"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => saveNote(v.ip_hash)}
+                                  className="text-cyan-300 hover:text-cyan-200"
+                                >
+                                  ✓
+                                </button>
+                              </span>
+                            ) : (
+                              <span
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setNoteEditingIp(v.ip_hash);
+                                  setNoteText(v.note || "");
+                                }}
+                                className="cursor-text hover:text-cyan-300"
+                              >
+                                {v.note || (
+                                  <span className="text-gray-600">
+                                    + 备注
+                                  </span>
+                                )}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-xs">
+                            <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-violet-200">
+                              {v.count} 次
+                            </span>
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-400">
+                            {v.last_at
+                              ? new Date(v.last_at).toLocaleString("zh-CN", {
+                                  hour12: false,
+                                  month: "2-digit",
+                                  day: "2-digit",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })
+                              : "—"}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={`rounded px-2 py-0.5 text-xs ${
+                                v.last_device === "mobile"
+                                  ? "bg-amber-500/15 text-amber-200"
+                                  : "bg-emerald-500/15 text-emerald-200"
+                              }`}
+                            >
+                              {v.last_device || "—"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-xs">
+                            {parsePath(v.last_path)}
+                          </td>
+                        </tr>
+                        {isOpen && (
+                          <tr className="bg-black/30">
+                            <td colSpan={6} className="px-4 py-4">
+                              <div className="mb-2 flex items-center justify-between">
+                                <span className="text-xs text-cyan-300">
+                                  {v.ip_hash} 的全部访问记录（
+                                  {visitorRecords.length} 条）
+                                </span>
+                                <span className="text-[10px] text-gray-600">
+                                  首次：
+                                  {v.first_at
+                                    ? new Date(v.first_at).toLocaleString(
+                                        "zh-CN",
+                                        { hour12: false }
+                                      )
+                                    : "—"}
+                                </span>
+                              </div>
+                              {loadingRecords ? (
+                                <div className="py-4 text-center text-xs text-gray-500">
+                                  加载中…
+                                </div>
+                              ) : (
+                                <div className="max-h-64 overflow-y-auto rounded-lg border border-white/5">
+                                  <table className="min-w-full text-left text-xs">
+                                    <thead className="sticky top-0 bg-[#0a0618] text-gray-500">
+                                      <tr>
+                                        <th className="px-3 py-2">时间</th>
+                                        <th className="px-3 py-2">路径</th>
+                                        <th className="px-3 py-2">来源</th>
+                                        <th className="px-3 py-2">设备</th>
+                                        <th className="px-3 py-2">环境</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {visitorRecords.map((r) => (
+                                        <tr
+                                          key={r.id}
+                                          className="border-b border-white/5 text-gray-400"
+                                        >
+                                          <td className="whitespace-nowrap px-3 py-1.5">
+                                            {r.created_at
+                                              ? new Date(
+                                                  r.created_at
+                                                ).toLocaleString("zh-CN", {
+                                                  hour12: false,
+                                                  month: "2-digit",
+                                                  day: "2-digit",
+                                                  hour: "2-digit",
+                                                  minute: "2-digit",
+                                                })
+                                              : "—"}
+                                          </td>
+                                          <td className="px-3 py-1.5">
+                                            {parsePath(r.path)}
+                                          </td>
+                                          <td className="px-3 py-1.5">
+                                            {parseReferrer(r.referrer)}
+                                          </td>
+                                          <td className="px-3 py-1.5">
+                                            {r.device}
+                                          </td>
+                                          <td className="px-3 py-1.5">
+                                            {parseUA(r.ua)}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                      {!visitorRecords.length && (
+                                        <tr>
+                                          <td
+                                            colSpan={5}
+                                            className="px-3 py-4 text-center text-gray-600"
+                                          >
+                                            无记录
+                                          </td>
+                                        </tr>
+                                      )}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     );
                   })}
-                  {!filteredVisits.length && (
+                  {!filteredVisitors.length && (
                     <tr>
                       <td
                         colSpan={6}
                         className="px-4 py-8 text-center text-gray-500"
                       >
-                        无匹配记录
+                        无匹配访客
                       </td>
                     </tr>
                   )}
@@ -1130,7 +1333,13 @@ export default function AdminPage() {
                   className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 outline-none focus:border-cyan-400/40"
                   value={form.title}
                   onChange={(e) => setForm({ ...form, title: e.target.value })}
-                  placeholder="标题"
+                  placeholder={
+                    type === "internship"
+                      ? "公司名称，如：字节跳动"
+                      : type === "profile"
+                        ? "姓名"
+                        : "标题"
+                  }
                   required
                 />
                 <textarea
@@ -1139,12 +1348,16 @@ export default function AdminPage() {
                   onChange={(e) =>
                     setForm({ ...form, summary: e.target.value })
                   }
-                  placeholder="简介 / 摘要"
+                  placeholder={
+                    type === "internship"
+                      ? "时间段 · 职位，如：2024-06 ~ 2024-09 · 后端开发实习生"
+                      : "简介 / 摘要"
+                  }
                 />
-                {(type === "project" || type === "profile") &&
+                {(type === "project" || type === "profile" || type === "internship") &&
                   tab === "contents" && (
                   <>
-                    {type === "project" && (
+                    {(type === "project" || type === "internship") && (
                       <>
                     <textarea
                       className="min-h-[80px] w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 outline-none focus:border-cyan-400/40"
@@ -1152,7 +1365,11 @@ export default function AdminPage() {
                       onChange={(e) =>
                         setForm({ ...form, detail: e.target.value })
                       }
-                      placeholder="详情介绍（弹窗长文）"
+                      placeholder={
+                        type === "internship"
+                          ? "实习描述（工作内容、成果等）"
+                          : "详情介绍（弹窗长文）"
+                      }
                     />
                     <input
                       className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 outline-none focus:border-cyan-400/40"
@@ -1160,8 +1377,13 @@ export default function AdminPage() {
                       onChange={(e) =>
                         setForm({ ...form, tags: e.target.value })
                       }
-                      placeholder="标签，逗号分隔：Uniapp, Python"
+                      placeholder={
+                        type === "internship"
+                          ? "技术栈，逗号分隔：Spring Boot, MySQL, Redis"
+                          : "标签，逗号分隔：Uniapp, Python"
+                      }
                     />
+                    {type === "project" && (
                     <input
                       className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 font-mono text-sm outline-none focus:border-cyan-400/40"
                       value={form.links}
@@ -1170,8 +1392,10 @@ export default function AdminPage() {
                       }
                       placeholder='链接 JSON：{"github":"...","demo":"..."}'
                     />
+                    )}
                       </>
                     )}
+                    {(type === "project" || type === "profile") && (
                     <input
                       className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 outline-none focus:border-cyan-400/40"
                       value={form.cover_url}
@@ -1184,6 +1408,7 @@ export default function AdminPage() {
                           : "项目封面 URL"
                       }
                     />
+                    )}
                     {form.cover_url && (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img

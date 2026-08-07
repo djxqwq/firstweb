@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Cyber Canvas - High Performance Neural Network Animation</title>
+    <meta name="description" content="A lightweight, high-performance vanilla JavaScript HTML5 canvas animation simulating a connected neural network or cyber-infrastructure. Free to use and perfect for AI, tech, and cybersecurity landing pages.">
+    
+    <style>
+        /* CSS Reset & Basic Layout */
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #030712;
+            font-family: 'Inter', -apple-system, sans-serif;
+            overflow: hidden;
+            color: #f8fafc;
+        }
+
+        /* Container for content layered ABOVE the canvas */
+        .content-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            text-align: center;
+            pointer-events: none; /* Let mouse events pass through to canvas */
+        }
+
+        h1 {
+            font-size: clamp(2.5rem, 5vw, 4rem);
+            font-weight: 300;
+            letter-spacing: -0.02em;
+            margin-bottom: 1rem;
+        }
+
+        p {
+            font-size: 1.1rem;
+            color: #94a3b8;
+            max-width: 600px;
+            margin: 0 auto;
+            line-height: 1.6;
+        }
+
+        /* The Canvas Element */
+        #cyber-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            /* opacity: 0.8; Uncomment if you want to dial down intensity */
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Content overlaid on top of the animation -->
+    <div class="content-overlay">
+        <h1>Interactive Cyber Canvas</h1>
+        <p>Move your mouse around the screen to interact with the network nodes. Built with pure, high-performance vanilla JavaScript.</p>
+    </div>
+
+    <!-- The interactive background canvas -->
+    <canvas id="cyber-canvas"></canvas>
+
+    <script>
+    (function(){
+        'use strict';
+        
+        // 1. Check for user motion preferences (Accessibility)
+        const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+        const canvas = document.getElementById('cyber-canvas');
+        
+        if (!canvas || reduced) {
+            if(canvas) canvas.style.display = 'none';
+            return;
+        }
+        
+        // 2. High Performance Initialization
+        // alpha: false tells the browser the canvas is fully opaque, skipping expensive transparency compositing
+        const ctx = canvas.getContext('2d', { alpha: false }); 
+        let W, H, pts = [], raf;
+        const mouse = { x: -1000, y: -1000 };
+        
+        // 3. Mouse Tracking
+        // Track mouse on the entire window since the canvas fills the screen
+        window.addEventListener('mousemove', function(e) {
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+        });
+        window.addEventListener('mouseleave', function() {
+            mouse.x = -1000;
+            mouse.y = -1000;
+        });
+
+        // 4. Resize Handler
+        function resize() {
+            W = canvas.width = window.innerWidth;
+            H = canvas.height = window.innerHeight;
+        }
+        
+        // 5. Particle Object Definition
+        function Pt() {
+            this.x = Math.random() * W;
+            this.y = Math.random() * H;
+            // Velocity
+            this.vx = (Math.random() - 0.5) * 0.8; 
+            this.vy = (Math.random() - 0.5) * 0.8;
+            // Radius
+            this.r = Math.random() * 1.5 + 0.5;
+        }
+        
+        Pt.prototype.step = function() {
+            // Calculate distance from mouse
+            const dx = mouse.x - this.x;
+            const dy = mouse.y - this.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            
+            // Gentle repulsion effect
+            if (dist < 180) { 
+                const force = (180 - dist) / 180;
+                this.x -= (dx / dist) * force * 2;
+                this.y -= (dy / dist) * force * 2;
+            }
+
+            // Apply velocity
+            this.x += this.vx;
+            this.y += this.vy;
+            
+            // Bounce off screen walls
+            if (this.x < 0 || this.x > W) this.vx *= -1;
+            if (this.y < 0 || this.y > H) this.vy *= -1;
+        };
+        
+        Pt.prototype.draw = function() {
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.r, 0, Math.PI*2);
+            ctx.fillStyle = 'rgba(56,189,248,0.8)'; // Cyan dot
+            ctx.fill();
+        };
+        
+        // 6. Draw connection lines between nearby particles
+        function drawLines() {
+            const D = 150; // Maximum distance to connect nodes
+            
+            for (let i = 0; i < pts.length; i++) {
+                for (let j = i + 1; j < pts.length; j++) {
+                    const dx = pts[i].x - pts[j].x;
+                    const dy = pts[i].y - pts[j].y;
+                    const d = Math.sqrt(dx*dx + dy*dy);
+                    
+                    if (d < D) {
+                        ctx.beginPath();
+                        ctx.moveTo(pts[i].x, pts[i].y);
+                        ctx.lineTo(pts[j].x, pts[j].y);
+                        // Alpha fades out as distance increases
+                        ctx.strokeStyle = 'rgba(56,189,248,' + ((1 - d/D) * 0.2) + ')';
+                        ctx.lineWidth = 0.5;
+                        ctx.stroke();
+                    }
+                }
+                
+                // Draw line connecting node to mouse cursor
+                const dMouseX = pts[i].x - mouse.x;
+                const dMouseY = pts[i].y - mouse.y;
+                const dMouse = Math.sqrt(dMouseX*dMouseX + dMouseY*dMouseY);
+                
+                if (dMouse < 200) {
+                    ctx.beginPath();
+                    ctx.moveTo(pts[i].x, pts[i].y);
+                    ctx.lineTo(mouse.x, mouse.y);
+                    // Cyber-violet hue for mouse connections
+                    ctx.strokeStyle = 'rgba(139,92,246,' + ((1 - dMouse/200) * 0.3) + ')'; 
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                }
+            }
+        }
+        
+        // 7. Main Animation Loop
+        function loop() {
+            // Fast clear with solid obsidian background
+            ctx.fillStyle = '#030712';
+            ctx.fillRect(0, 0, W, H);
+            
+            // Render subtle radial glow at the center of the screen
+            const gradient = ctx.createRadialGradient(W/2, 0, 0, W/2, 0, W);
+            gradient.addColorStop(0, '#0f172a');
+            gradient.addColorStop(1, '#030712');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, W, H);
+            
+            // Process and draw particles and lines
+            pts.forEach(p => { p.step(); p.draw(); });
+            drawLines();
+            
+            raf = requestAnimationFrame(loop);
+        }
+        
+        // 8. Start Engine
+        function init() {
+            resize();
+            pts = [];
+            // Dynamically adjust particle density based on screen size for performance
+            let numPts = Math.floor((W * H) / 18000); 
+            if (numPts > 80) numPts = 80;   // Max limit
+            if (numPts < 20) numPts = 20;   // Min limit
+            
+            for (let i = 0; i < numPts; i++) pts.push(new Pt());
+            loop();
+        }
+        
+        // 9. Handle Resizing with debouncing
+        let rt;
+        window.addEventListener('resize', function(){
+            clearTimeout(rt);
+            rt = setTimeout(function(){
+                cancelAnimationFrame(raf);
+                init();
+            }, 200);
+        });
+        
+        init();
+    })();
+    </script>
+</body>
+</html>

@@ -19,6 +19,12 @@
 
 - [ItsWanheda/SystemBreach-Preloader](https://github.com/ItsWanheda/SystemBreach-Preloader) — MIT — full cyber glitch terminal boot in `frontend/public/boot/` (branded theme overlay `theme-site.css`)
 
+## Encryption / tech orbit
+
+- [devwontory/tech-stack](https://github.com/devwontory/tech-stack) — MIT — animated tech orbit SVG (`frontend/public/effects/tech-orbit.svg`)
+- [a-vip/interactive-cyber-canvas](https://github.com/a-vip/interactive-cyber-canvas) — neural network canvas adapted as `frontend/public/effects/cyber-network.js`
+- [VincentGarreau/particles.js](https://github.com/VincentGarreau/particles.js) — MIT — kept under `frontend/public/effects/particles.js`
+
 ## Music player
 
 - Custom starfield glass dock + Web Audio AnalyserNode spectrum orbit (local ambient WAV loops in `frontend/public/music/`)

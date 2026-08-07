@@ -21,6 +21,11 @@ export type ApiItem = {
   summary: string;
   level?: number;
   links?: { related?: number[] } & Record<string, unknown>;
+  body?: Record<string, unknown>;
+  tags?: string[] | string;
+  cover_url?: string;
+  sort_order?: number;
+  published?: boolean;
 };
 
 async function getJson<T>(path: string): Promise<T | null> {
@@ -41,6 +46,22 @@ export async function fetchVisitStats() {
   );
 }
 
+export type MyInfo = {
+  ip: string;
+  country: string;
+  region: string;
+  city: string;
+  isp: string;
+  device: string;
+  os: string;
+  browser: string;
+  ua: string;
+};
+
+export async function fetchMyInfo() {
+  return getJson<MyInfo>("/api/visits/myinfo");
+}
+
 export async function fetchProjects() {
   return getJson<ApiProject[]>("/api/projects");
 }
@@ -55,6 +76,10 @@ export async function fetchHonors() {
 
 export async function fetchSkills() {
   return getJson<ApiItem[]>("/api/skills");
+}
+
+export async function fetchInternships() {
+  return getJson<ApiItem[]>("/api/internships");
 }
 
 export async function fetchProfile() {
@@ -122,18 +147,55 @@ export type MessageItem = {
   is_admin: boolean;
   reply_to: number | null;
   created_at: string | null;
+  likes: number;
+  liked: boolean;
+  replies?: MessageItem[];
 };
 
-export async function fetchMessages(limit = 30): Promise<MessageItem[]> {
+export type MessagePage = {
+  items: MessageItem[];
+  total: number;
+  page: number;
+  has_more: boolean;
+};
+
+export async function fetchMessages(page = 1, size = 10): Promise<MessagePage> {
   try {
-    const res = await fetch(`${API_BASE}/api/messages?limit=${limit}`, {
-      cache: "no-store",
-    });
-    if (!res.ok) return [];
-    return (await res.json()) as MessageItem[];
+    const res = await fetch(
+      `${API_BASE}/api/messages?page=${page}&size=${size}`,
+      { cache: "no-store" }
+    );
+    if (!res.ok) return { items: [], total: 0, page: 1, has_more: false };
+    return (await res.json()) as MessagePage;
   } catch {
-    return [];
+    return { items: [], total: 0, page: 1, has_more: false };
   }
+}
+
+export async function likeMessage(id: number) {
+  const res = await fetch(`${API_BASE}/api/messages/${id}/like`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("like failed");
+  return (await res.json()) as {
+    ok: boolean;
+    liked: boolean;
+    likes: number;
+  };
+}
+
+export async function replyMessagePublic(
+  parentId: number,
+  name: string,
+  content: string
+) {
+  const res = await fetch(`${API_BASE}/api/messages/${parentId}/reply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, content }),
+  });
+  if (!res.ok) throw new Error("reply failed");
+  return res.json();
 }
 
 export async function replyMessage(

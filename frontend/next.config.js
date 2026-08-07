@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
+  allowedDevOrigins: ["10.191.35.183"],
   turbopack: {
     root: __dirname,
   },
