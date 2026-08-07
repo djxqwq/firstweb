@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -131,6 +131,17 @@ class ProjectClick(Base):
     id = Column(Integer, primary_key=True)
     project_id = Column(Integer, index=True)
     count = Column(Integer, default=0)
+
+
+class AdminLogin(Base):
+    """Admin 登录审计记录 —— 追踪哪些设备登录过后台。"""
+    __tablename__ = "admin_logins"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(64), nullable=False)
+    ip_hash = Column(String(64), default="")
+    ua = Column(String(512), default="")
+    device = Column(String(64), default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -546,18 +557,76 @@ def post_message(payload: MessageIn, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+def delete_upload_file(url: str | None) -> None:
+    """删除 /uploads/ 路径对应的文件以节省存储空间。
+
+    仅处理 /uploads/ 开头的相对路径（用户上传文件），跳过外部 URL 和静态资源。
+    删除失败静默忽略，不影响主流程。
+    """
+    if not url or not url.startswith("/uploads/"):
+        return
+    try:
+        path = UPLOAD_DIR / Path(url).name
+        if path.is_file():
+            path.unlink()
+    except Exception:
+        pass
+
+
+def get_client_ip(request: Request) -> str:
+    """提取真实访客 IP（穿透 Nginx 反向代理）。
+
+    优先级：X-Forwarded-For 首段 > X-Real-IP > TCP 直连 IP。
+    反代场景下 request.client.host 是代理容器 IP，不可直接用。
+    """
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        # X-Forwarded-For: client, proxy1, proxy2 — 取最左边的客户端 IP
+        return xff.split(",")[0].strip()
+    xri = request.headers.get("x-real-ip", "")
+    if xri:
+        return xri.strip()
+    return request.client.host if request.client else ""
+
+
+def detect_device(ua: str) -> str:
+    """从 User-Agent 推断设备类型。"""
+    ua_lower = (ua or "").lower()
+    if any(k in ua_lower for k in ("mobile", "android", "iphone", "ipad", "windows phone")):
+        return "mobile"
+    return "desktop"
+
+
+# 同 IP + 同路径的去重窗口（秒）：窗口内重复访问不重复记录
+VISIT_DEDUP_SECONDS = 300
+
+
 @app.post("/api/visits")
 def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)):
-    ip = request.client.host if request.client else ""
+    ip = get_client_ip(request)
     ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:16]
     ua = (request.headers.get("user-agent") or "")[:512]
+    path = payload.path[:255]
+
+    # 去重：同 IP + 同路径在窗口内已记录过则跳过，避免刷新刷量
+    threshold = datetime.now(timezone.utc) - timedelta(seconds=VISIT_DEDUP_SECONDS)
+    already = db.scalar(
+        select(Visit.id).where(
+            Visit.ip_hash == ip_hash,
+            Visit.path == path,
+            Visit.created_at >= threshold,
+        ).limit(1)
+    )
+    if already:
+        return {"ok": True, "dedup": True}
+
     db.add(
         Visit(
             ip_hash=ip_hash,
             ua=ua,
-            path=payload.path[:255],
+            path=path,
             referrer=payload.referrer[:512],
-            device=payload.device[:64],
+            device=payload.device[:64] or detect_device(ua),
         )
     )
     db.commit()
@@ -614,11 +683,27 @@ def project_click(project_id: int, db: Session = Depends(get_db)):
 # ---- Admin auth ----
 @app.post("/api/admin/login", response_model=Token)
 def admin_login(
-    form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db),
 ):
     admin = db.scalar(select(Admin).where(Admin.username == form_data.username))
     if not admin or not verify_password(form_data.password, admin.password_hash):
         raise HTTPException(status_code=400, detail="用户名或密码错误")
+
+    # 记录登录设备审计日志
+    ip = get_client_ip(request)
+    ua = (request.headers.get("user-agent") or "")[:512]
+    db.add(
+        AdminLogin(
+            username=admin.username,
+            ip_hash=hashlib.sha256(ip.encode()).hexdigest()[:16],
+            ua=ua,
+            device=detect_device(ua),
+        )
+    )
+    db.commit()
+
     token = create_access_token({"sub": admin.username})
     return {"access_token": token, "token_type": "bearer"}
 
@@ -677,6 +762,7 @@ def admin_update_content(
     row = db.get(Content, content_id)
     if not row:
         raise HTTPException(404, "not found")
+    old_cover = row.cover_url or ""  # 记录旧封面，提交后清理
     row.type = payload.type
     row.title = payload.title
     row.summary = payload.summary
@@ -701,6 +787,9 @@ def admin_update_content(
     row.level = payload.level
     db.commit()
     db.refresh(row)
+    # 封面更换且旧封面是上传文件时，删除旧文件节省空间
+    if old_cover and old_cover != payload.cover_url:
+        delete_upload_file(old_cover)
     return content_to_out(row)
 
 
@@ -713,14 +802,17 @@ def admin_delete_content(
     row = db.get(Content, content_id)
     if not row:
         raise HTTPException(404, "not found")
+    cover = row.cover_url or ""  # 删除内容前记录封面，提交后清理文件
     db.delete(row)
     db.commit()
+    delete_upload_file(cover)
     return {"ok": True}
 
 
 @app.post("/api/admin/upload")
 async def admin_upload(
     file: UploadFile = File(...),
+    old_url: str | None = Form(None),
     _: Admin = Depends(get_current_admin),
 ):
     raw_name = file.filename or "bin"
@@ -746,6 +838,8 @@ async def admin_upload(
     if len(content) > 15 * 1024 * 1024:
         raise HTTPException(400, "file too large (max 15MB)")
     dest.write_bytes(content)
+    # 新文件保存成功后，删除旧文件以节省空间
+    delete_upload_file(old_url)
     return {"url": f"/uploads/{name}", "name": raw_name, "size": len(content)}
 
 
@@ -766,10 +860,50 @@ def admin_visits(
             "path": r.path,
             "referrer": r.referrer,
             "device": r.device,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
+            # 数据库存的是 UTC，但 DateTime 列不保留时区；取出后补上 UTC 标记，
+            # 前端 new Date() 即可自动转为浏览器本地时区显示。
+            "created_at": r.created_at.replace(tzinfo=timezone.utc).isoformat()
+            if r.created_at
+            else None,
         }
         for r in rows
     ]
+
+
+@app.get("/api/admin/login-records")
+def admin_login_records(
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(get_current_admin),
+):
+    """Admin 登录审计：查看哪些设备/IP 登录过后台。"""
+    rows = db.scalars(
+        select(AdminLogin).order_by(AdminLogin.id.desc()).limit(min(limit, 500))
+    ).all()
+    return [
+        {
+            "id": r.id,
+            "username": r.username,
+            "ip_hash": r.ip_hash,
+            "ua": r.ua,
+            "device": r.device,
+            "created_at": r.created_at.replace(tzinfo=timezone.utc).isoformat()
+            if r.created_at
+            else None,
+        }
+        for r in rows
+    ]
+
+
+@app.delete("/api/admin/login-records")
+def admin_login_records_clear(
+    db: Session = Depends(get_db),
+    _: Admin = Depends(get_current_admin),
+):
+    """清空登录审计记录。"""
+    db.query(AdminLogin).delete()
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/admin/visits/export")

@@ -27,7 +27,7 @@ interface MeshNode {
 const MESH_NODES: MeshNode[] = [
   { id: "cpp",      label: "C/C++",       color: "#22d3ee", angle: 0,    radius: 155, connections: ["python","java","opencv"] },
   { id: "python",   label: "Python",      color: "#fbbf24", angle: 26,   radius: 130, connections: ["cpp","opencv","yolo","fastapi"] },
-  { id: "java",     label: "Java",        color: "#f472b6", angle: -26,  radius: 140, connections: ["cpp","springboot"] },
+  { id: "java",     label: "Java",        color: "#f472b6", angle: -26,  radius: 140, connections: ["cpp","spring"] },
   { id: "opencv",   label: "OpenCV",      color: "#34d399", angle: 52,   radius: 160, connections: ["cpp","python","yolo"] },
   { id: "yolo",     label: "YOLO",        color: "#a855f7", angle: 78,   radius: 145, connections: ["python","opencv"] },
   { id: "spring",   label: "SpringBoot",  color: "#fb923c", angle: -52,  radius: 150, connections: ["java","mysql"] },
@@ -168,86 +168,91 @@ export const Encryption = () => {
 
       {/* lock area */}
       <div className="relative z-10 flex flex-col items-center">
-        {/* ====== 网状技术栈（解锁后出现） ====== */}
-        <AnimatePresence>
-          {open && (
-            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-              {/* ---- SVG 连线层 ---- */}
-              <svg
-                viewBox="-220 -220 440 440"
-                className="absolute left-1/2 top-1/2 h-[440px] w-[440px] -translate-x-1/2 -translate-y-1/2"
-                style={{ overflow: "visible" }}
-              >
-                {lineSegments.map((seg, i) => {
-                  const fr = (seg.from.angle * Math.PI) / 180;
-                  const tr = (seg.to.angle * Math.PI) / 180;
-                  const x1 = Math.cos(fr) * seg.from.radius;
-                  const y1 = Math.sin(fr) * seg.from.radius;
-                  const x2 = Math.cos(tr) * seg.to.radius;
-                  const y2 = Math.sin(tr) * seg.to.radius;
+        {/* ====== lock button 锚点容器（网状图以锁中心对齐） ====== */}
+        <div className="relative">
+          {/* ====== 网状技术栈（解锁后出现，对齐到锁按钮中心） ====== */}
+          <AnimatePresence>
+            {open && (
+              <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+                {/* ---- SVG 连线层 ---- */}
+                <svg
+                  viewBox="-220 -220 440 440"
+                  className="absolute left-1/2 top-1/2 h-[440px] w-[440px] -translate-x-1/2 -translate-y-1/2"
+                  style={{ overflow: "visible" }}
+                >
+                  {lineSegments.map((seg, i) => {
+                    const fr = (seg.from.angle * Math.PI) / 180;
+                    const tr = (seg.to.angle * Math.PI) / 180;
+                    const x1 = Math.cos(fr) * seg.from.radius;
+                    const y1 = Math.sin(fr) * seg.from.radius;
+                    const x2 = Math.cos(tr) * seg.to.radius;
+                    const y2 = Math.sin(tr) * seg.to.radius;
+                    return (
+                      <motion.path
+                        key={`${seg.from.id}-${seg.to.id}`}
+                        d={`M ${x1} ${y1} L ${x2} ${y2}`}
+                        fill="none"
+                        stroke={seg.from.color}
+                        strokeWidth="1.2"
+                        strokeOpacity="0.4"
+                        initial={{ opacity: 0, pathLength: 0 }}
+                        animate={{ opacity: 1, pathLength: 1 }}
+                        exit={{ opacity: 0, pathLength: 0 }}
+                        transition={{
+                          delay: 0.25 + i * 0.04,
+                          duration: 0.6,
+                          ease: "easeInOut",
+                        }}
+                        style={{ filter: `drop-shadow(0 0 3px ${seg.from.color}66)` }}
+                      />
+                    );
+                  })}
+                </svg>
+
+                {/* ---- 节点层（transformTemplate 避免覆盖 -translate-1/2） ---- */}
+                {MESH_NODES.map((node, i) => {
+                  const rad = (node.angle * Math.PI) / 180;
+                  const x = Math.cos(rad) * node.radius;
+                  const y = Math.sin(rad) * node.radius;
                   return (
-                    <motion.path
-                      key={`${seg.from.id}-${seg.to.id}`}
-                      d={`M ${x1} ${y1} L ${x2} ${y2}`}
-                      fill="none"
-                      stroke={seg.from.color}
-                      strokeWidth="1.2"
-                      strokeOpacity="0.35"
-                      initial={{ opacity: 0, pathLength: 0 }}
-                      animate={{ opacity: 1, pathLength: 1 }}
-                      exit={{ opacity: 0, pathLength: 0 }}
+                    <motion.span
+                      key={node.id}
+                      initial={{ opacity: 0, scale: 0, x: 0, y: 0 }}
+                      animate={{ opacity: 1, scale: 1, x, y }}
+                      exit={{ opacity: 0, scale: 0, x: 0, y: 0 }}
                       transition={{
-                        delay: 0.25 + i * 0.04,
-                        duration: 0.6,
-                        ease: "easeInOut",
+                        type: "spring",
+                        stiffness: 180,
+                        damping: 16,
+                        delay: 0.35 + i * 0.055,
                       }}
-                      style={{ filter: `drop-shadow(0 0 3px ${seg.from.color}44)` }}
-                    />
+                      transformTemplate={({ x, y, scale }) =>
+                        `translate(-50%, -50%) translate(${x}, ${y}) scale(${scale})`
+                      }
+                      className="absolute left-0 top-0 whitespace-nowrap rounded-full border px-3 py-1 text-[11px] font-semibold backdrop-blur-sm"
+                      style={{
+                        color: node.color,
+                        borderColor: `${node.color}66`,
+                        background: `${node.color}14`,
+                        boxShadow: `0 0 12px ${node.color}33`,
+                      }}
+                    >
+                      {node.label}
+                    </motion.span>
                   );
                 })}
-              </svg>
+              </div>
+            )}
+          </AnimatePresence>
 
-              {/* ---- 节点层 ---- */}
-              {MESH_NODES.map((node, i) => {
-                const rad = (node.angle * Math.PI) / 180;
-                const x = Math.cos(rad) * node.radius;
-                const y = Math.sin(rad) * node.radius;
-                return (
-                  <motion.span
-                    key={node.id}
-                    initial={{ opacity: 0, scale: 0, x: 0, y: 0 }}
-                    animate={{ opacity: 1, scale: 1, x, y }}
-                    exit={{ opacity: 0, scale: 0, x: 0, y: 0 }}
-                    transition={{
-                      type: "spring",
-                      stiffness: 180,
-                      damping: 16,
-                      delay: 0.35 + i * 0.055,
-                    }}
-                    className="absolute left-0 top-0 -translate-x-1/2 -translate-y-1/2 rounded-full border px-3 py-1 text-[11px] font-semibold backdrop-blur-sm whitespace-nowrap"
-                    style={{
-                      color: node.color,
-                      borderColor: `${node.color}66`,
-                      background: `${node.color}14`,
-                      boxShadow: `0 0 12px ${node.color}33`,
-                    }}
-                  >
-                    {node.label}
-                  </motion.span>
-                );
-              })}
-            </div>
-          )}
-        </AnimatePresence>
-
-        {/* magnetic container */}
-        <div
-          ref={containerRef}
-          onPointerMove={handleMove}
-          onPointerEnter={() => setHover(true)}
-          onPointerLeave={resetMagnetic}
-          className="relative transition-transform duration-200 ease-out"
-        >
+          {/* magnetic container */}
+          <div
+            ref={containerRef}
+            onPointerMove={handleMove}
+            onPointerEnter={() => setHover(true)}
+            onPointerLeave={resetMagnetic}
+            className="relative transition-transform duration-200 ease-out"
+          >
           {/* pulse rings — hover */}
           <AnimatePresence>
             {hover && !open &&
@@ -380,6 +385,7 @@ export const Encryption = () => {
               </motion.svg>
             </motion.div>
           </button>
+        </div>
         </div>
 
         {/* status badge */}

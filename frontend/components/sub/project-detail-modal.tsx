@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect } from "react";
 
@@ -74,12 +73,11 @@ export function ProjectDetailModal({ project, onClose }: Props) {
             className="relative z-[1] flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[#7042f861] bg-[#0a0618] shadow-[0_0_60px_rgba(112,66,248,0.35)]"
           >
             <div className="relative h-44 w-full shrink-0 md:h-56">
-              <Image
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
                 src={project.image}
                 alt={project.title}
-                fill
-                className="object-cover"
-                sizes="(max-width: 768px) 100vw, 768px"
+                className="absolute inset-0 h-full w-full object-cover"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-[#0a0618] via-[#0a0618]/40 to-transparent" />
               <button

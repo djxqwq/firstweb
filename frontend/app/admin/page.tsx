@@ -46,6 +46,15 @@ type VisitStats = {
   devices?: Record<string, number>;
 };
 
+type LoginRecord = {
+  id: number;
+  username: string;
+  ip_hash: string;
+  ua: string;
+  device: string;
+  created_at: string | null;
+};
+
 type FormState = {
   id: number | null;
   title: string;
@@ -85,7 +94,7 @@ export default function AdminPage() {
   const [pass, setPass] = useState("");
   const [type, setType] = useState<string>("project");
   const [tab, setTab] = useState<
-    "contents" | "visits" | "messages" | "settings"
+    "contents" | "visits" | "messages" | "settings" | "logins"
   >("contents");
   const [items, setItems] = useState<ContentItem[]>([]);
   const [visits, setVisits] = useState<VisitItem[]>([]);
@@ -104,6 +113,7 @@ export default function AdminPage() {
     { id: string; title: string; url: string }[]
   >([]);
   const [musicUploading, setMusicUploading] = useState(false);
+  const [loginRecords, setLoginRecords] = useState<LoginRecord[]>([]);
 
   useEffect(() => {
     setToken(localStorage.getItem("admin_token") || "");
@@ -176,6 +186,34 @@ export default function AdminPage() {
     if (sRes.ok) setStats(await sRes.json());
   }, [token, logout]);
 
+  const loadLoginRecords = useCallback(async () => {
+    if (!token) return;
+    const res = await fetch(`${API}/api/admin/login-records?limit=200`, {
+      headers: authHeaders(token),
+    });
+    if (res.status === 401) {
+      logout();
+      return;
+    }
+    if (res.ok) setLoginRecords(await res.json());
+  }, [token, logout]);
+
+  const clearLoginRecords = async () => {
+    if (!confirm("确认清空所有登录记录？")) return;
+    const res = await fetch(`${API}/api/admin/login-records`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    if (res.status === 401) {
+      logout();
+      return;
+    }
+    if (res.ok) {
+      setLoginRecords([]);
+      setOkMsg("登录记录已清空");
+    }
+  };
+
   const loadSettings = useCallback(async () => {
     if (!token) return;
     const res = await fetch(`${API}/api/admin/settings`, {
@@ -214,8 +252,9 @@ export default function AdminPage() {
     if (!token) return;
     if (tab === "visits") loadVisits();
     else if (tab === "settings") loadSettings();
+    else if (tab === "logins") loadLoginRecords();
     else loadContents();
-  }, [token, tab, type, loadContents, loadVisits, loadSettings]);
+  }, [token, tab, type, loadContents, loadVisits, loadSettings, loadLoginRecords]);
 
   const filteredVisits = useMemo(() => {
     return visits.filter((v) => {
@@ -237,6 +276,10 @@ export default function AdminPage() {
     try {
       const fd = new FormData();
       fd.append("file", file);
+      // 传旧封面 URL，后端保存新图后自动删除旧图以节省空间
+      if (form.cover_url?.startsWith("/uploads/")) {
+        fd.append("old_url", form.cover_url);
+      }
       const res = await fetch(`${API}/api/admin/upload`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
@@ -483,6 +526,7 @@ export default function AdminPage() {
               [
                 ["contents", "内容"],
                 ["visits", "访客"],
+                ["logins", "登录"],
                 ["messages", "留言"],
                 ["settings", "设置"],
               ] as const
@@ -645,7 +689,17 @@ export default function AdminPage() {
                       className="border-b border-white/5 text-gray-300"
                     >
                       <td className="whitespace-nowrap px-4 py-2 text-xs">
-                        {v.created_at?.replace("T", " ").slice(0, 19) || "—"}
+                        {v.created_at
+                          ? new Date(v.created_at).toLocaleString("zh-CN", {
+                              hour12: false,
+                              year: "numeric",
+                              month: "2-digit",
+                              day: "2-digit",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              second: "2-digit",
+                            })
+                          : "—"}
                       </td>
                       <td className="px-4 py-2">{v.path}</td>
                       <td className="px-4 py-2">{v.device}</td>
@@ -667,6 +721,83 @@ export default function AdminPage() {
                         className="px-4 py-8 text-center text-gray-500"
                       >
                         无匹配记录
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {tab === "logins" && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-2 text-xs text-amber-200/80">
+                后台登录审计 · 共 {loginRecords.length} 条记录
+              </div>
+              <button
+                type="button"
+                onClick={clearLoginRecords}
+                className="rounded-lg border border-red-400/40 px-3 py-1 text-xs text-red-300"
+              >
+                清空记录
+              </button>
+            </div>
+
+            <div className="overflow-x-auto rounded-2xl border border-white/10 bg-[#0a0618]">
+              <table className="min-w-full text-left text-sm">
+                <thead className="border-b border-white/10 text-xs text-gray-500">
+                  <tr>
+                    <th className="px-4 py-3">登录时间</th>
+                    <th className="px-4 py-3">账号</th>
+                    <th className="px-4 py-3">设备</th>
+                    <th className="px-4 py-3">IP Hash</th>
+                    <th className="px-4 py-3">UA</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loginRecords.map((r) => (
+                    <tr
+                      key={r.id}
+                      className="border-b border-white/5 text-gray-300"
+                    >
+                      <td className="whitespace-nowrap px-4 py-2 text-xs">
+                        {r.created_at
+                          ? new Date(r.created_at).toLocaleString("zh-CN", {
+                              hour12: false,
+                            })
+                          : "—"}
+                      </td>
+                      <td className="px-4 py-2 text-cyan-300/80">
+                        {r.username}
+                      </td>
+                      <td className="px-4 py-2">
+                        <span
+                          className={`rounded px-2 py-0.5 text-xs ${
+                            r.device === "mobile"
+                              ? "bg-amber-500/15 text-amber-200"
+                              : "bg-emerald-500/15 text-emerald-200"
+                          }`}
+                        >
+                          {r.device || "—"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs text-cyan-300/80">
+                        {r.ip_hash}
+                      </td>
+                      <td className="max-w-[260px] truncate px-4 py-2 text-xs text-gray-500">
+                        {r.ua}
+                      </td>
+                    </tr>
+                  ))}
+                  {!loginRecords.length && (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        className="px-4 py-8 text-center text-gray-500"
+                      >
+                        暂无登录记录
                       </td>
                     </tr>
                   )}

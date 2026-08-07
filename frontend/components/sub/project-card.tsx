@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { motion } from "framer-motion";
 import type { ProjectItem } from "@/components/sub/project-detail-modal";
 
@@ -37,11 +36,10 @@ export const ProjectCard = ({
     >
       <div className="relative flex h-full flex-col overflow-hidden rounded-2xl border border-[#7042f861] bg-[#030014]/70 shadow-[0_0_40px_rgba(112,66,248,0.12)] transition duration-300 group-hover:border-cyan-400/50 group-hover:shadow-[0_0_50px_rgba(34,211,238,0.25)]">
         <div className="relative overflow-hidden">
-          <Image
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
             src={src}
             alt={title}
-            width={1000}
-            height={1000}
             className="h-48 w-full object-cover transition duration-500 group-hover:scale-110"
           />
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#030014] via-transparent to-transparent opacity-80" />
