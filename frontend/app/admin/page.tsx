@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
 const TYPES = [
   { key: "project", label: "项目" },
@@ -140,7 +140,7 @@ export default function AdminPage() {
       localStorage.setItem("admin_token", data.access_token);
       setToken(data.access_token);
     } catch {
-      setError("无法连接 API（http://127.0.0.1:8000）");
+      setError("无法连接 API，请检查后端服务");
     } finally {
       setLoading(false);
     }
