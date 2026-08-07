@@ -549,12 +549,72 @@ def post_message(payload: MessageIn, db: Session = Depends(get_db)):
             type="message",
             title=payload.name[:64],
             summary=payload.content[:2000],
-            published=False,
+            body_json=json.dumps(
+                {"is_admin": False, "reply_to": None}, ensure_ascii=False
+            ),
+            published=True,
             sort_order=0,
         )
     )
     db.commit()
     return {"ok": True}
+
+
+@app.get("/api/messages")
+def list_messages(db: Session = Depends(get_db), limit: int = 30):
+    """公开留言墙：返回最近 published 留言（含管理员回复），按时间倒序。"""
+    rows = db.scalars(
+        select(Content)
+        .where(Content.type == "message", Content.published.is_(True))
+        .order_by(Content.id.desc())
+        .limit(min(max(limit, 1), 100))
+    ).all()
+    out = []
+    for r in rows:
+        body = _loads(r.body_json, {})
+        if not isinstance(body, dict):
+            body = {}
+        out.append(
+            {
+                "id": r.id,
+                "name": r.title or "visitor",
+                "content": r.summary or "",
+                "is_admin": bool(body.get("is_admin", False)),
+                "reply_to": body.get("reply_to"),
+                "created_at": (r.created_at.isoformat() + "Z") if r.created_at else None,
+            }
+        )
+    return out
+
+
+class ReplyIn(BaseModel):
+    content: str
+
+
+@app.post("/api/admin/messages/{message_id}/reply")
+def admin_reply_message(
+    message_id: int,
+    payload: ReplyIn,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(get_current_admin),
+):
+    """管理员回复留言：创建 is_admin=True 的回复，前台高亮显示。"""
+    parent = db.get(Content, message_id)
+    if not parent or parent.type != "message":
+        raise HTTPException(404, "message not found")
+    reply = Content(
+        type="message",
+        title="博主",
+        summary=payload.content[:2000],
+        body_json=json.dumps(
+            {"is_admin": True, "reply_to": message_id}, ensure_ascii=False
+        ),
+        published=True,
+        sort_order=0,
+    )
+    db.add(reply)
+    db.commit()
+    return {"ok": True, "id": reply.id}
 
 
 def delete_upload_file(url: str | None) -> None:

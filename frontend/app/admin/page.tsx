@@ -81,6 +81,62 @@ const emptyForm = (): FormState => ({
   detail: "",
 });
 
+/* ---------- 访客信息友好化解析 ---------- */
+function parseUA(ua: string): string {
+  if (!ua) return "未知";
+  let browser = "未知";
+  if (/Edg\//.test(ua)) browser = "Edge";
+  else if (/Chrome\//.test(ua) && !/Chromium/.test(ua)) browser = "Chrome";
+  else if (/Firefox\//.test(ua)) browser = "Firefox";
+  else if (/Safari\//.test(ua) && !/Chrome/.test(ua)) browser = "Safari";
+  let os = "未知";
+  if (/Windows NT 10/.test(ua)) os = "Windows";
+  else if (/Windows/.test(ua)) os = "Windows";
+  else if (/iPhone|iPad/.test(ua)) os = "iOS";
+  else if (/Mac OS X/.test(ua)) os = "macOS";
+  else if (/Android/.test(ua)) os = "Android";
+  else if (/Linux/.test(ua)) os = "Linux";
+  return `${browser} · ${os}`;
+}
+
+function parseReferrer(ref: string): string {
+  if (!ref) return "直接访问";
+  try {
+    const host = new URL(ref).hostname.replace(/^www\./, "");
+    if (host.includes("google")) return "Google";
+    if (host.includes("baidu")) return "百度";
+    if (host.includes("bing")) return "Bing";
+    if (host.includes("github")) return "GitHub";
+    if (host.includes("723539")) return "本站";
+    return host;
+  } catch {
+    return ref.slice(0, 28);
+  }
+}
+
+function parsePath(path: string): string {
+  if (!path || path === "/") return "首页";
+  if (path.startsWith("/admin")) return "后台";
+  if (path.startsWith("/#")) return `首页·${path.slice(2)}`;
+  return path;
+}
+
+function hashColor(hash: string): string {
+  if (!hash) return "#888";
+  const h = hash.slice(0, 6).padEnd(6, "0");
+  const r = parseInt(h.slice(0, 2), 16) || 0;
+  const g = parseInt(h.slice(2, 4), 16) || 0;
+  const b = parseInt(h.slice(4, 6), 16) || 0;
+  return `rgb(${(r % 180) + 60}, ${(g % 180) + 60}, ${(b % 180) + 60})`;
+}
+
+function isRecent(iso: string | null, minutes = 5): boolean {
+  if (!iso) return false;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t < minutes * 60 * 1000;
+}
+
 function authHeaders(token: string) {
   return {
     Authorization: `Bearer ${token}`,
@@ -114,6 +170,11 @@ export default function AdminPage() {
   >([]);
   const [musicUploading, setMusicUploading] = useState(false);
   const [loginRecords, setLoginRecords] = useState<LoginRecord[]>([]);
+  const [replyingTo, setReplyingTo] = useState<number | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const [projectOptions, setProjectOptions] = useState<
+    { id: number; title: string }[]
+  >([]);
 
   useEffect(() => {
     setToken(localStorage.getItem("admin_token") || "");
@@ -255,6 +316,61 @@ export default function AdminPage() {
     else if (tab === "logins") loadLoginRecords();
     else loadContents();
   }, [token, tab, type, loadContents, loadVisits, loadSettings, loadLoginRecords]);
+
+  // profile 类型：自动加载已有个人信息进编辑模式（避免新增多条）
+  useEffect(() => {
+    if (
+      type === "profile" &&
+      tab === "contents" &&
+      items.length > 0 &&
+      !form.id
+    ) {
+      edit(items[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type, items, tab]);
+
+  // 访客 tab 实时轮询（30 秒自动刷新）
+  useEffect(() => {
+    if (tab !== "visits" || !token) return;
+    const timer = setInterval(() => loadVisits(), 30000);
+    return () => clearInterval(timer);
+  }, [tab, token, loadVisits]);
+
+  // 技能编辑时加载项目列表供关联选择
+  useEffect(() => {
+    if (type !== "skill" || tab !== "contents") return;
+    fetch(`${API}/api/projects`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setProjectOptions(
+            data.map((p: { id: number; title: string }) => ({
+              id: p.id,
+              title: p.title,
+            }))
+          );
+        }
+      })
+      .catch(() => {});
+  }, [type, tab, API]);
+
+  // 技能关联项目：读取/切换 related ids
+  const getRelatedIds = (): number[] => {
+    try {
+      const obj = form.links.trim() ? JSON.parse(form.links) : {};
+      return Array.isArray(obj.related) ? obj.related : [];
+    } catch {
+      return [];
+    }
+  };
+  const toggleRelated = (id: number) => {
+    const current = getRelatedIds();
+    const next = current.includes(id)
+      ? current.filter((x) => x !== id)
+      : [...current, id];
+    setForm({ ...form, links: JSON.stringify({ related: next }) });
+  };
 
   const filteredVisits = useMemo(() => {
     return visits.filter((v) => {
@@ -452,6 +568,32 @@ export default function AdminPage() {
     });
     if (res.status === 401) logout();
     loadContents();
+  };
+
+  const submitReply = async (id: number) => {
+    if (!replyText.trim() || !token) return;
+    setError("");
+    try {
+      const res = await fetch(`${API}/api/admin/messages/${id}/reply`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ content: replyText }),
+      });
+      if (res.status === 401) {
+        logout();
+        return;
+      }
+      if (!res.ok) {
+        setError("回复失败");
+        return;
+      }
+      setReplyText("");
+      setReplyingTo(null);
+      setOkMsg("已回复，前台留言墙可见");
+      loadContents();
+    } catch {
+      setError("回复失败：检查 API");
+    }
   };
 
   const exportVisits = async () => {
@@ -668,6 +810,13 @@ export default function AdminPage() {
               <span className="self-center text-xs text-gray-500">
                 显示 {filteredVisits.length} / {visits.length}
               </span>
+              <button
+                type="button"
+                onClick={() => loadVisits()}
+                className="rounded-lg border border-cyan-400/40 px-3 py-1.5 text-xs text-cyan-200 hover:bg-cyan-500/10"
+              >
+                刷新
+              </button>
             </div>
 
             <div className="overflow-x-auto rounded-2xl border border-white/10 bg-[#0a0618]">
@@ -675,45 +824,77 @@ export default function AdminPage() {
                 <thead className="border-b border-white/10 text-xs text-gray-500">
                   <tr>
                     <th className="px-4 py-3">时间</th>
-                    <th className="px-4 py-3">路径</th>
+                    <th className="px-4 py-3">访客</th>
                     <th className="px-4 py-3">设备</th>
+                    <th className="px-4 py-3">路径</th>
                     <th className="px-4 py-3">来源</th>
-                    <th className="px-4 py-3">IP Hash</th>
-                    <th className="px-4 py-3">UA</th>
+                    <th className="px-4 py-3">环境</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredVisits.map((v) => (
-                    <tr
-                      key={v.id}
-                      className="border-b border-white/5 text-gray-300"
-                    >
-                      <td className="whitespace-nowrap px-4 py-2 text-xs">
-                        {v.created_at
-                          ? new Date(v.created_at).toLocaleString("zh-CN", {
-                              hour12: false,
-                              year: "numeric",
-                              month: "2-digit",
-                              day: "2-digit",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              second: "2-digit",
-                            })
-                          : "—"}
-                      </td>
-                      <td className="px-4 py-2">{v.path}</td>
-                      <td className="px-4 py-2">{v.device}</td>
-                      <td className="max-w-[160px] truncate px-4 py-2 text-xs text-gray-500">
-                        {v.referrer || "—"}
-                      </td>
-                      <td className="px-4 py-2 font-mono text-xs text-cyan-300/80">
-                        {v.ip_hash}
-                      </td>
-                      <td className="max-w-[220px] truncate px-4 py-2 text-xs text-gray-500">
-                        {v.ua}
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredVisits.map((v) => {
+                    const recent = isRecent(v.created_at);
+                    const vc = hashColor(v.ip_hash);
+                    return (
+                      <tr
+                        key={v.id}
+                        className={`border-b border-white/5 text-gray-300 ${
+                          recent ? "bg-emerald-500/[0.07]" : ""
+                        }`}
+                      >
+                        <td className="whitespace-nowrap px-4 py-2 text-xs">
+                          {v.created_at
+                            ? new Date(v.created_at).toLocaleString("zh-CN", {
+                                hour12: false,
+                                month: "2-digit",
+                                day: "2-digit",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })
+                            : "—"}
+                          {recent && (
+                            <span
+                              className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"
+                              title="新访客"
+                            />
+                          )}
+                        </td>
+                        <td className="px-4 py-2">
+                          <span
+                            className="inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[11px]"
+                            style={{
+                              color: vc,
+                              background: `${vc}1a`,
+                              border: `1px solid ${vc}40`,
+                            }}
+                            title={v.ip_hash}
+                          >
+                            {v.ip_hash ? v.ip_hash.slice(0, 6) : "—"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2">
+                          <span
+                            className={`rounded px-2 py-0.5 text-xs ${
+                              v.device === "mobile"
+                                ? "bg-amber-500/15 text-amber-200"
+                                : "bg-emerald-500/15 text-emerald-200"
+                            }`}
+                          >
+                            {v.device || "—"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2 text-xs">
+                          {parsePath(v.path)}
+                        </td>
+                        <td className="px-4 py-2 text-xs text-gray-400">
+                          {parseReferrer(v.referrer)}
+                        </td>
+                        <td className="px-4 py-2 text-xs text-gray-400">
+                          {parseUA(v.ua)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {!filteredVisits.length && (
                     <tr>
                       <td
@@ -1043,15 +1224,47 @@ export default function AdminPage() {
                   </>
                 )}
                 {type === "skill" && tab === "contents" && (
-                  <input
-                    type="number"
-                    className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 outline-none focus:border-cyan-400/40"
-                    value={form.level}
-                    onChange={(e) =>
-                      setForm({ ...form, level: Number(e.target.value) })
-                    }
-                    placeholder="熟练度 0-100"
-                  />
+                  <>
+                    <input
+                      type="number"
+                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 outline-none focus:border-cyan-400/40"
+                      value={form.level}
+                      onChange={(e) =>
+                        setForm({ ...form, level: Number(e.target.value) })
+                      }
+                      placeholder="熟练度 0-100"
+                    />
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                      <div className="mb-2 text-xs text-gray-400">
+                        关联项目（前台 hover 技能时展示，可多选）
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {projectOptions.map((p) => {
+                          const checked = getRelatedIds().includes(p.id);
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => toggleRelated(p.id)}
+                              className={`rounded-lg border px-2.5 py-1 text-xs transition ${
+                                checked
+                                  ? "border-cyan-400/60 bg-cyan-500/15 text-cyan-200"
+                                  : "border-white/10 text-gray-400 hover:border-white/30"
+                              }`}
+                            >
+                              {checked ? "✓ " : ""}
+                              {p.title}
+                            </button>
+                          );
+                        })}
+                        {projectOptions.length === 0 && (
+                          <span className="text-xs text-gray-600">
+                            暂无项目，请先在「项目」类型下添加
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </>
                 )}
                 <input
                   type="number"
@@ -1109,12 +1322,28 @@ export default function AdminPage() {
                         <div className="mt-2 text-[11px] text-gray-500">
                           #{item.id} · sort {item.sort_order} ·{" "}
                           {item.published ? "已发布" : "草稿"}
-                          {typeof item.level === "number" && item.level > 0
-                            ? ` · ${item.level}%`
+                          {item.type === "skill" &&
+                          typeof item.level === "number" &&
+                          item.level > 0
+                            ? ` · 熟练度 ${item.level}%`
                             : ""}
                         </div>
                       </div>
                       <div className="flex shrink-0 gap-2">
+                        {tab === "messages" && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setReplyingTo(
+                                replyingTo === item.id ? null : item.id
+                              );
+                              setReplyText("");
+                            }}
+                            className="rounded-lg border border-purple-400/30 px-2 py-1 text-xs text-purple-200"
+                          >
+                            回复
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => edit(item)}
@@ -1131,6 +1360,23 @@ export default function AdminPage() {
                         </button>
                       </div>
                     </div>
+                    {tab === "messages" && replyingTo === item.id && (
+                      <div className="mt-3 flex gap-2">
+                        <input
+                          value={replyText}
+                          onChange={(e) => setReplyText(e.target.value)}
+                          placeholder="以博主身份回复…"
+                          className="min-w-0 flex-1 rounded-lg border border-purple-400/30 bg-black/40 px-3 py-1.5 text-sm text-white outline-none focus:border-purple-400/60"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => submitReply(item.id)}
+                          className="rounded-lg bg-gradient-to-r from-purple-600 to-cyan-600 px-3 py-1.5 text-xs text-white"
+                        >
+                          发送
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
                 {!items.length && (

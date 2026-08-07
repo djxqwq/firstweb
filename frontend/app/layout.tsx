@@ -5,7 +5,7 @@ import { siteConfig } from "@/config";
 import { cn } from "@/lib/utils";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const viewport: Viewport = {
   themeColor: "#030014",
@@ -19,7 +19,7 @@ export default function RootLayout({ children }: PropsWithChildren) {
       <body
         className={cn(
           "bg-[#030014] overflow-y-scroll overflow-x-hidden antialiased",
-          inter.className
+          inter.variable
         )}
       >
         {children}

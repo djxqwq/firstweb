@@ -20,6 +20,7 @@ export type ApiItem = {
   title: string;
   summary: string;
   level?: number;
+  links?: { related?: number[] } & Record<string, unknown>;
 };
 
 async function getJson<T>(path: string): Promise<T | null> {
@@ -111,6 +112,44 @@ export async function sendMessage(name: string, content: string) {
     body: JSON.stringify({ name, content }),
   });
   if (!res.ok) throw new Error("send failed");
+  return res.json();
+}
+
+export type MessageItem = {
+  id: number;
+  name: string;
+  content: string;
+  is_admin: boolean;
+  reply_to: number | null;
+  created_at: string | null;
+};
+
+export async function fetchMessages(limit = 30): Promise<MessageItem[]> {
+  try {
+    const res = await fetch(`${API_BASE}/api/messages?limit=${limit}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    return (await res.json()) as MessageItem[];
+  } catch {
+    return [];
+  }
+}
+
+export async function replyMessage(
+  id: number,
+  content: string,
+  token: string
+) {
+  const res = await fetch(`${API_BASE}/api/admin/messages/${id}/reply`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) throw new Error("reply failed");
   return res.json();
 }
 

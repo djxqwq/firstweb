@@ -42,12 +42,20 @@ jobs:
             docker image prune -f 2>/dev/null || sudo docker image prune -f
 
             echo "===== 健康检查 ====="
-            sleep 5
-            if curl -sf http://127.0.0.1:8000/api/health > /dev/null; then
-              echo "✓ 后端正常"
-            else
+            # 后端连远程 TiDB + 建表需要时间，5 秒太短会误报。改为重试 10 次，每次间隔 3 秒
+            ok=0
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              sleep 3
+              if curl -sf http://127.0.0.1:8000/api/health > /dev/null 2>&1; then
+                echo "✓ 后端正常（第 ${i} 次尝试）"
+                ok=1
+                break
+              fi
+              echo "等待后端就绪... (${i}/10)"
+            done
+            if [ "$ok" = "0" ]; then
               echo "✗ 后端异常"
-              docker logs blog-backend --tail 20 2>/dev/null || sudo docker logs blog-backend --tail 20
+              docker logs blog-backend --tail 30 2>/dev/null || sudo docker logs blog-backend --tail 30
             fi
 
             echo "===== 部署完成: $(date) ====="

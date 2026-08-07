@@ -1,8 +1,8 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { sendMessage } from "@/lib/api";
+import { fetchMessages, sendMessage, type MessageItem } from "@/lib/api";
 
 const LINKS = [
   {
@@ -22,12 +22,31 @@ const LINKS = [
   },
 ] as const;
 
+function fmtTime(iso: string | null): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString("zh-CN", {
+    hour12: false,
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export const Contact = () => {
   const [name, setName] = useState("");
   const [content, setContent] = useState("");
   const [status, setStatus] = useState<"idle" | "ok" | "err">("idle");
   const [loading, setLoading] = useState(false);
   const [burst, setBurst] = useState(0);
+  const [messages, setMessages] = useState<MessageItem[]>([]);
+
+  const loadMessages = () =>
+    fetchMessages(30).then((data) => setMessages(data));
+
+  useEffect(() => {
+    loadMessages();
+  }, []);
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -38,6 +57,7 @@ export const Contact = () => {
       setStatus("ok");
       setContent("");
       setBurst((n) => n + 1);
+      loadMessages();
     } catch {
       setStatus("err");
     } finally {
@@ -108,7 +128,7 @@ export const Contact = () => {
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            placeholder="想说的话"
+            placeholder="想说的话（提交后会在下方留言墙公开显示）"
             required
             className="min-h-[140px] w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none transition focus:border-cyan-400/40"
           />
@@ -122,12 +142,73 @@ export const Contact = () => {
             {loading ? "发送中…" : "发送留言"}
           </motion.button>
           {status === "ok" && (
-            <p className="text-center text-sm text-cyan-300">已收到</p>
+            <p className="text-center text-sm text-cyan-300">
+              已收到，留言已上墙
+            </p>
           )}
           {status === "err" && (
             <p className="text-center text-sm text-rose-300">发送失败</p>
           )}
         </motion.form>
+      </div>
+
+      {/* ====== 留言墙 ====== */}
+      <div className="mt-16 w-full max-w-5xl">
+        <div className="mb-6 flex items-center justify-center gap-3">
+          <span className="h-px w-12 bg-gradient-to-r from-transparent to-purple-400/50" />
+          <h2 className="bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-2xl font-medium text-transparent">
+            留言墙
+          </h2>
+          <span className="h-px w-12 bg-gradient-to-l from-transparent to-cyan-400/50" />
+        </div>
+
+        {messages.length === 0 ? (
+          <p className="py-10 text-center text-sm text-gray-500">
+            还没有留言，快来抢沙发吧 🌟
+          </p>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2">
+            {messages.map((m, i) => (
+              <motion.div
+                key={m.id}
+                initial={{ opacity: 0, y: 12 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: Math.min(i * 0.04, 0.4) }}
+                className={`rounded-2xl border p-5 backdrop-blur-sm ${
+                  m.is_admin
+                    ? "border-purple-400/50 bg-purple-500/[0.08] shadow-[0_0_24px_rgba(168,85,247,0.18)]"
+                    : "border-white/10 bg-[#0a0618]/70"
+                }`}
+              >
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                        m.is_admin
+                          ? "bg-purple-500/20 text-purple-200"
+                          : "bg-cyan-500/15 text-cyan-200"
+                      }`}
+                    >
+                      {m.is_admin ? "博主" : m.name || "访客"}
+                    </span>
+                    {m.reply_to && (
+                      <span className="text-[10px] text-gray-500">
+                        回复 #{m.reply_to}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-gray-500">
+                    {fmtTime(m.created_at)}
+                  </span>
+                </div>
+                <p className="text-sm leading-relaxed text-gray-200">
+                  {m.content}
+                </p>
+              </motion.div>
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );

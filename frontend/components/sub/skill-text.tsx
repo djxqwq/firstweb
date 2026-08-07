@@ -24,7 +24,7 @@ export const SkillText = () => {
 
       <motion.div
         variants={slideInFromLeft(0.5)}
-        className="mb-[15px] mt-[10px] text-center text-[30px] font-medium text-white"
+        className="mb-[15px] mt-[10px] text-center text-[30px] font-medium bg-gradient-to-r from-purple-400 via-fuchsia-300 to-cyan-400 bg-clip-text text-transparent"
       >
         用现代技术栈构建可靠系统
       </motion.div>

@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { fetchProfile, resolveMediaUrl } from "@/lib/api";
 
@@ -124,13 +123,11 @@ export function SnakeHub() {
       />
 
       <div className="pointer-events-none relative z-[2] flex h-full flex-col items-center justify-center px-6 text-center">
-        <Image
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
           src={avatar}
           alt={name}
-          width={100}
-          height={100}
-          unoptimized={avatar.startsWith("http")}
-          className="rounded-full border-[3px] border-cyan-300/50 object-cover shadow-[0_0_24px_rgba(112,66,248,0.45)]"
+          className="h-[100px] w-[100px] rounded-full border-[3px] border-cyan-300/50 object-cover shadow-[0_0_24px_rgba(112,66,248,0.45)]"
         />
         <h2 className="mt-4 text-3xl font-light text-white md:text-4xl">
           {name}

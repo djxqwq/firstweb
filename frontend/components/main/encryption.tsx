@@ -17,43 +17,46 @@ type Spark = {
 interface MeshNode {
   id: string;
   label: string;
+  short: string;
   color: string;
-  angle: number;   // degrees
-  radius: number;  // px from center
-  connections: string[];
+  angle: number; // degrees
+  desc: string;
 }
 
-/* ---------- 技术栈网状节点 ---------- */
+/* ---------- 技术栈放射节点（12 个等距环绕 + 中心核心） ---------- */
+const NODE_RADIUS = 168;
+
 const MESH_NODES: MeshNode[] = [
-  { id: "cpp",      label: "C/C++",       color: "#22d3ee", angle: 0,    radius: 155, connections: ["python","java","opencv"] },
-  { id: "python",   label: "Python",      color: "#fbbf24", angle: 26,   radius: 130, connections: ["cpp","opencv","yolo","fastapi"] },
-  { id: "java",     label: "Java",        color: "#f472b6", angle: -26,  radius: 140, connections: ["cpp","spring"] },
-  { id: "opencv",   label: "OpenCV",      color: "#34d399", angle: 52,   radius: 160, connections: ["cpp","python","yolo"] },
-  { id: "yolo",     label: "YOLO",        color: "#a855f7", angle: 78,   radius: 145, connections: ["python","opencv"] },
-  { id: "spring",   label: "SpringBoot",  color: "#fb923c", angle: -52,  radius: 150, connections: ["java","mysql"] },
-  { id: "fastapi",  label: "FastAPI",     color: "#22d3ee", angle: 104,  radius: 135, connections: ["python","docker","tidb"] },
-  { id: "mysql",    label: "MySQL",       color: "#fbbf24", angle: -78,  radius: 155, connections: ["spring","tidb"] },
-  { id: "tidb",     label: "TiDB",        color: "#a855f7", angle: -104, radius: 140, connections: ["mysql","fastapi","docker"] },
-  { id: "docker",   label: "Docker",      color: "#38bdf8", angle: 130,  radius: 150, connections: ["fastapi","tidb","nginx"] },
-  { id: "nginx",    label: "Nginx",       color: "#34d399", angle: -130, radius: 145, connections: ["docker","git"] },
-  { id: "git",      label: "Git",         color: "#f472b6", angle: 156,  radius: 130, connections: ["nginx","react"] },
-  { id: "react",    label: "React/Next",  color: "#22d3ee", angle: -156, radius: 150, connections: ["git","vue"] },
-  { id: "vue",      label: "Vue/Uniapp",  color: "#34d399", angle: 182,  radius: 140, connections: ["react"] },
+  { id: "cpp",     label: "C/C++",       short: "C++",  color: "#22d3ee", angle: -90, desc: "系统级开发与算法竞赛主力语言" },
+  { id: "python",  label: "Python",      short: "Py",   color: "#fbbf24", angle: -60, desc: "AI / 后端 / 自动化的万能胶水" },
+  { id: "java",    label: "Java",        short: "Java", color: "#f472b6", angle: -30, desc: "工程化后端与 Spring 生态" },
+  { id: "spring",  label: "Spring Boot", short: "SB",   color: "#fb923c", angle: 0,   desc: "企业级 Java 后端框架" },
+  { id: "fastapi", label: "FastAPI",     short: "FA",   color: "#22d3ee", angle: 30,  desc: "高性能 Python 异步后端" },
+  { id: "mysql",   label: "MySQL",       short: "SQL",  color: "#fbbf24", angle: 60,  desc: "关系型数据库基石" },
+  { id: "tidb",    label: "TiDB",        short: "TiDB", color: "#a855f7", angle: 90,  desc: "分布式 MySQL 兼容数据库" },
+  { id: "docker",  label: "Docker",      short: "Dk",   color: "#38bdf8", angle: 120, desc: "容器化部署与交付" },
+  { id: "nginx",   label: "Nginx",       short: "Ng",   color: "#34d399", angle: 150, desc: "反向代理与静态资源服务" },
+  { id: "react",   label: "React/Next",  short: "Rx",   color: "#22d3ee", angle: 180, desc: "现代化前端与 SSR 框架" },
+  { id: "vue",     label: "Vue/Uniapp",  short: "Vue",  color: "#34d399", angle: 210, desc: "渐进式前端与跨端小程序" },
+  { id: "opencv",  label: "OpenCV/YOLO", short: "CV",   color: "#a855f7", angle: 240, desc: "计算机视觉与目标检测" },
 ];
 
-/* ---------- 预计算连线（去重） ---------- */
-function buildLineSegments() {
-  const map = new Map(MESH_NODES.map((n) => [n.id, n]));
-  const segments: { from: MeshNode; to: MeshNode }[] = [];
-  for (const node of MESH_NODES) {
-    for (const cid of node.connections) {
-      const target = map.get(cid);
-      if (!target) continue;
-      if (segments.some((s) => (s.from.id === target.id && s.to.id === node.id))) continue;
-      segments.push({ from: node, to: target });
-    }
+/* 节点坐标 */
+function nodePos(node: MeshNode) {
+  const rad = (node.angle * Math.PI) / 180;
+  return { x: Math.cos(rad) * NODE_RADIUS, y: Math.sin(rad) * NODE_RADIUS };
+}
+
+/* 环线：相邻节点连接 */
+function buildRingSegments() {
+  const segs: { from: MeshNode; to: MeshNode }[] = [];
+  for (let i = 0; i < MESH_NODES.length; i++) {
+    segs.push({
+      from: MESH_NODES[i],
+      to: MESH_NODES[(i + 1) % MESH_NODES.length],
+    });
   }
-  return segments;
+  return segs;
 }
 
 /* ---------- component ---------- */
@@ -61,12 +64,13 @@ export const Encryption = () => {
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState(false);
   const [sparks, setSparks] = useState<Spark[]>([]);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   const sparkId = useRef(0);
   const sparkRaf = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const lineSegments = useMemo(buildLineSegments, []);
+  const ringSegments = useMemo(buildRingSegments, []);
 
   /* ---- spark engine ---- */
   const runSparks = useCallback((initial: Spark[]) => {
@@ -174,71 +178,141 @@ export const Encryption = () => {
           <AnimatePresence>
             {open && (
               <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-                {/* ---- SVG 连线层 ---- */}
+                {/* ---- SVG 连线层（放射线 + 环线） ---- */}
                 <svg
-                  viewBox="-220 -220 440 440"
-                  className="absolute left-1/2 top-1/2 h-[440px] w-[440px] -translate-x-1/2 -translate-y-1/2"
+                  viewBox="-210 -210 420 420"
+                  className="absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2"
                   style={{ overflow: "visible" }}
                 >
-                  {lineSegments.map((seg, i) => {
-                    const fr = (seg.from.angle * Math.PI) / 180;
-                    const tr = (seg.to.angle * Math.PI) / 180;
-                    const x1 = Math.cos(fr) * seg.from.radius;
-                    const y1 = Math.sin(fr) * seg.from.radius;
-                    const x2 = Math.cos(tr) * seg.to.radius;
-                    const y2 = Math.sin(tr) * seg.to.radius;
+                  {/* 放射线：中心 → 每个节点 */}
+                  {MESH_NODES.map((node, i) => {
+                    const { x, y } = nodePos(node);
+                    const active = !hoveredId || hoveredId === node.id;
                     return (
-                      <motion.path
-                        key={`${seg.from.id}-${seg.to.id}`}
-                        d={`M ${x1} ${y1} L ${x2} ${y2}`}
-                        fill="none"
-                        stroke={seg.from.color}
-                        strokeWidth="1.2"
-                        strokeOpacity="0.4"
-                        initial={{ opacity: 0, pathLength: 0 }}
-                        animate={{ opacity: 1, pathLength: 1 }}
-                        exit={{ opacity: 0, pathLength: 0 }}
-                        transition={{
-                          delay: 0.25 + i * 0.04,
-                          duration: 0.6,
-                          ease: "easeInOut",
+                      <motion.line
+                        key={`ray-${node.id}`}
+                        x1={0}
+                        y1={0}
+                        x2={x}
+                        y2={y}
+                        stroke={node.color}
+                        strokeWidth={active ? 1.6 : 1}
+                        strokeOpacity={active ? 0.7 : 0.12}
+                        initial={{ pathLength: 0, opacity: 0 }}
+                        animate={{ pathLength: 1, opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ delay: 0.2 + i * 0.03, duration: 0.5 }}
+                        style={{
+                          filter: active
+                            ? `drop-shadow(0 0 4px ${node.color}99)`
+                            : "none",
                         }}
-                        style={{ filter: `drop-shadow(0 0 3px ${seg.from.color}66)` }}
+                      />
+                    );
+                  })}
+                  {/* 环线：相邻节点连接 */}
+                  {ringSegments.map((seg, i) => {
+                    const a = nodePos(seg.from);
+                    const b = nodePos(seg.to);
+                    const active =
+                      !hoveredId ||
+                      hoveredId === seg.from.id ||
+                      hoveredId === seg.to.id;
+                    return (
+                      <motion.line
+                        key={`ring-${seg.from.id}-${seg.to.id}`}
+                        x1={a.x}
+                        y1={a.y}
+                        x2={b.x}
+                        y2={b.y}
+                        stroke={seg.from.color}
+                        strokeWidth={active ? 1.3 : 0.8}
+                        strokeOpacity={active ? 0.5 : 0.08}
+                        initial={{ pathLength: 0, opacity: 0 }}
+                        animate={{ pathLength: 1, opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ delay: 0.4 + i * 0.03, duration: 0.5 }}
                       />
                     );
                   })}
                 </svg>
 
-                {/* ---- 节点层（transformTemplate 避免覆盖 -translate-1/2） ---- */}
+                {/* ---- 中心核心节点 ---- */}
+                <motion.div
+                  initial={{ opacity: 0, scale: 0 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0 }}
+                  transition={{
+                    type: "spring",
+                    stiffness: 200,
+                    damping: 18,
+                    delay: 0.15,
+                  }}
+                  className="absolute left-0 top-0 z-10 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border border-cyan-300/50 bg-gradient-to-br from-purple-600/30 to-cyan-500/30 text-center backdrop-blur-sm"
+                  style={{ boxShadow: "0 0 24px rgba(34,211,238,0.4)" }}
+                >
+                  <span className="text-[11px] font-bold text-white">全栈</span>
+                  <span className="text-[8px] tracking-wider text-cyan-200/80">
+                    CORE
+                  </span>
+                </motion.div>
+
+                {/* ---- 外圈节点层（可交互） ---- */}
                 {MESH_NODES.map((node, i) => {
-                  const rad = (node.angle * Math.PI) / 180;
-                  const x = Math.cos(rad) * node.radius;
-                  const y = Math.sin(rad) * node.radius;
+                  const { x, y } = nodePos(node);
+                  const active = !hoveredId || hoveredId === node.id;
                   return (
-                    <motion.span
+                    <motion.div
                       key={node.id}
                       initial={{ opacity: 0, scale: 0, x: 0, y: 0 }}
-                      animate={{ opacity: 1, scale: 1, x, y }}
+                      animate={{ opacity: active ? 1 : 0.28, scale: 1, x, y }}
                       exit={{ opacity: 0, scale: 0, x: 0, y: 0 }}
                       transition={{
                         type: "spring",
                         stiffness: 180,
                         damping: 16,
-                        delay: 0.35 + i * 0.055,
+                        delay: 0.3 + i * 0.04,
+                        opacity: { duration: 0.2 },
                       }}
                       transformTemplate={({ x, y, scale }) =>
                         `translate(-50%, -50%) translate(${x}, ${y}) scale(${scale})`
                       }
-                      className="absolute left-0 top-0 whitespace-nowrap rounded-full border px-3 py-1 text-[11px] font-semibold backdrop-blur-sm"
+                      onPointerEnter={() => setHoveredId(node.id)}
+                      onPointerLeave={() => setHoveredId(null)}
+                      className="pointer-events-auto absolute left-0 top-0 z-20 flex h-14 w-14 cursor-pointer flex-col items-center justify-center rounded-full border text-center backdrop-blur-sm"
                       style={{
                         color: node.color,
-                        borderColor: `${node.color}66`,
-                        background: `${node.color}14`,
-                        boxShadow: `0 0 12px ${node.color}33`,
+                        borderColor: active
+                          ? `${node.color}aa`
+                          : `${node.color}40`,
+                        background: `${node.color}1f`,
+                        boxShadow: active ? `0 0 16px ${node.color}66` : "none",
                       }}
                     >
-                      {node.label}
-                    </motion.span>
+                      <span className="text-[11px] font-bold leading-tight">
+                        {node.short}
+                      </span>
+                      {/* tooltip */}
+                      <div
+                        className={`pointer-events-none absolute left-1/2 top-full z-30 mt-2 w-max -translate-x-1/2 rounded-lg border px-2.5 py-1.5 text-center transition-opacity duration-200 ${
+                          hoveredId === node.id ? "opacity-100" : "opacity-0"
+                        }`}
+                        style={{
+                          borderColor: `${node.color}55`,
+                          background: "rgba(10,6,24,0.95)",
+                        }}
+                      >
+                        <div
+                          className="text-[11px] font-semibold"
+                          style={{ color: node.color }}
+                        >
+                          {node.label}
+                        </div>
+                        <div className="text-[10px] text-gray-400">
+                          {node.desc}
+                        </div>
+                      </div>
+                    </motion.div>
                   );
                 })}
               </div>

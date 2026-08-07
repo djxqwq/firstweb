@@ -5,23 +5,52 @@ import { SkillDataProvider } from "@/components/sub/skill-data-provider";
 import { SkillText } from "@/components/sub/skill-text";
 import { motion } from "framer-motion";
 import { CORE_LEVELS, SKILL_GROUPS, PROJECTS } from "@/constants";
-import { fetchSkills, type ApiItem } from "@/lib/api";
+import { fetchProjects, fetchSkills } from "@/lib/api";
+
+type SkillRow = {
+  id: number;
+  title: string;
+  level: number;
+  relatedIds: number[];
+};
+
+type ProjectLite = { id: number; title: string; summary: string };
 
 // 熟练度条组件 - 支持悬停展示项目案例
-const SkillLevelBar = ({ skill, index }: { skill: { title: string; level: number }; index: number }) => {
+const SkillLevelBar = ({
+  skill,
+  index,
+  projects,
+}: {
+  skill: SkillRow;
+  index: number;
+  projects: ProjectLite[];
+}) => {
   const [hovered, setHovered] = useState(false);
-  
-  // 根据技能标题匹配相关项目
-  const getRelatedProjects = () => {
-    const skillLower = skill.title.toLowerCase();
-    return PROJECTS.filter(project => {
-      const tags = project.tags.map(t => t.toLowerCase());
-      return tags.some(tag => 
-        skillLower.includes(tag) || tag.includes(skillLower)
+
+  // 优先用后台关联的 relatedIds，无则回退标签模糊匹配
+  const getRelatedProjects = (): ProjectLite[] => {
+    if (skill.relatedIds.length > 0) {
+      const matched = projects.filter((p) =>
+        skill.relatedIds.includes(p.id)
       );
-    }).slice(0, 2);
+      if (matched.length) return matched.slice(0, 2);
+    }
+    const skillLower = skill.title.toLowerCase();
+    return PROJECTS.filter((project) => {
+      const tags = project.tags.map((t) => t.toLowerCase());
+      return tags.some(
+        (tag) => skillLower.includes(tag) || tag.includes(skillLower)
+      );
+    })
+      .slice(0, 2)
+      .map((p) => ({
+        id: 0,
+        title: p.title,
+        summary: p.description,
+      }));
   };
-  
+
   const relatedProjects = getRelatedProjects();
 
   return (
@@ -47,7 +76,7 @@ const SkillLevelBar = ({ skill, index }: { skill: { title: string; level: number
           className="h-full rounded-full bg-gradient-to-r from-purple-500 to-cyan-400"
         />
       </div>
-      
+
       {/* 悬停展示项目案例 */}
       {hovered && relatedProjects.length > 0 && (
         <motion.div
@@ -57,12 +86,18 @@ const SkillLevelBar = ({ skill, index }: { skill: { title: string; level: number
           transition={{ duration: 0.2 }}
           className="absolute left-0 right-0 top-full z-50 mt-2 rounded-lg border border-cyan-400/30 bg-[#0a0a1a]/95 p-3 shadow-xl backdrop-blur-sm"
         >
-          <div className="mb-2 text-xs font-medium text-cyan-300">相关项目：</div>
+          <div className="mb-2 text-xs font-medium text-cyan-300">
+            相关项目：
+          </div>
           <div className="space-y-2">
             {relatedProjects.map((project, idx) => (
               <div key={idx} className="rounded-md bg-white/5 p-2">
-                <div className="text-xs font-medium text-white">{project.title}</div>
-                <div className="mt-1 text-xs text-gray-400 line-clamp-2">{project.description}</div>
+                <div className="text-xs font-medium text-white">
+                  {project.title}
+                </div>
+                <div className="mt-1 text-xs text-gray-400 line-clamp-2">
+                  {project.summary}
+                </div>
               </div>
             ))}
           </div>
@@ -73,16 +108,39 @@ const SkillLevelBar = ({ skill, index }: { skill: { title: string; level: number
 };
 
 export const Skills = () => {
-  const [levels, setLevels] = useState(CORE_LEVELS);
+  const [levels, setLevels] = useState<SkillRow[]>(
+    CORE_LEVELS.map((s) => ({
+      id: 0,
+      title: s.title,
+      level: s.level,
+      relatedIds: [],
+    }))
+  );
+  const [projects, setProjects] = useState<ProjectLite[]>([]);
 
   useEffect(() => {
+    fetchProjects().then((data) => {
+      if (data?.length) {
+        setProjects(
+          data.map((p) => ({
+            id: p.id,
+            title: p.title,
+            summary: p.summary,
+          }))
+        );
+      }
+    });
     fetchSkills().then((data) => {
       if (!data?.length) return;
       const mapped = data
-        .filter((s: ApiItem) => s.title)
+        .filter((s) => s.title)
         .map((s) => ({
+          id: s.id,
           title: s.title,
           level: Math.min(100, Math.max(0, s.level || 0)),
+          relatedIds: Array.isArray(s.links?.related)
+            ? (s.links!.related as number[])
+            : [],
         }))
         .sort((a, b) => b.level - a.level);
       if (mapped.length) setLevels(mapped);
@@ -99,7 +157,10 @@ export const Skills = () => {
       {/* 技术栈图标 - 居中显示 */}
       <div className="relative z-[2] w-full flex flex-col items-center">
         {SKILL_GROUPS.map((group) => (
-          <div key={group.title} className="w-full max-w-5xl px-4 mb-8 flex flex-col items-center">
+          <div
+            key={group.title}
+            className="w-full max-w-5xl px-4 mb-8 flex flex-col items-center"
+          >
             <div className="mb-4 text-center font-mono text-[11px] tracking-[0.35em] text-gray-500">
               {group.title}
             </div>
@@ -126,7 +187,12 @@ export const Skills = () => {
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {levels.map((s, i) => (
-            <SkillLevelBar key={s.title} skill={s} index={i} />
+            <SkillLevelBar
+              key={`${s.id}-${s.title}`}
+              skill={s}
+              index={i}
+              projects={projects}
+            />
           ))}
         </div>
       </div>
