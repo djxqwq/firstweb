@@ -115,6 +115,33 @@ export function resolveMediaUrl(path: string) {
   return path;
 }
 
+/**
+ * 获取（必要时生成）浏览器本地永久访客 ID。
+ * 存在 localStorage，只要用户不清缓存/不换浏览器/不换设备就永久不变。
+ * 即使 IP 变了，后端也能据此把同一个人聚合到一起。
+ */
+export function getVisitorId(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const KEY = "visitor_id_v1";
+    let id = localStorage.getItem(KEY);
+    if (!id) {
+      // 生成 UUID v4
+      id =
+        (crypto as Crypto & { randomUUID?: () => string }).randomUUID?.() ??
+        "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+          const r = (Math.random() * 16) | 0;
+          const v = c === "x" ? r : (r & 0x3) | 0x8;
+          return v.toString(16);
+        });
+      localStorage.setItem(KEY, id);
+    }
+    return id;
+  } catch {
+    return "";
+  }
+}
+
 export function trackVisit(path = "/") {
   if (typeof window === "undefined") return;
   fetch(`${API_BASE}/api/visits`, {
@@ -126,6 +153,7 @@ export function trackVisit(path = "/") {
       device: /Mobile|Android|iPhone/i.test(navigator.userAgent)
         ? "mobile"
         : "desktop",
+      visitor_id: getVisitorId(),
     }),
   }).catch(() => {});
 }

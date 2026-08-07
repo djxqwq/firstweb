@@ -38,7 +38,13 @@ type ContentItem = {
 
 type VisitItem = {
   id: number;
-  ip_hash: string;
+  ip: string;
+  country: string;
+  region: string;
+  city: string;
+  isp: string;
+  os: string;
+  browser: string;
   ua: string;
   path: string;
   referrer: string;
@@ -47,11 +53,19 @@ type VisitItem = {
 };
 
 type VisitorAgg = {
+  visitor_id: string;
   ip_hash: string;
   note: string;
   count: number;
   first_at: string | null;
   last_at: string | null;
+  last_ip: string;
+  last_country: string;
+  last_region: string;
+  last_city: string;
+  last_isp: string;
+  last_os: string;
+  last_browser: string;
   last_device: string;
   last_path: string;
   last_referrer: string;
@@ -274,13 +288,13 @@ export default function AdminPage() {
   }, [token, logout]);
 
   const loadVisitorRecords = useCallback(
-    async (ipHash: string) => {
+    async (key: string) => {
       if (!token) return;
       setLoadingRecords(true);
       try {
         const res = await fetch(
           `${API}/api/admin/visitors/${encodeURIComponent(
-            ipHash
+            key
           )}/records?limit=500`,
           { headers: authHeaders(token) }
         );
@@ -296,10 +310,10 @@ export default function AdminPage() {
     [token, logout]
   );
 
-  const saveNote = async (ipHash: string) => {
+  const saveNote = async (key: string) => {
     if (!token) return;
     const res = await fetch(
-      `${API}/api/admin/visitors/${encodeURIComponent(ipHash)}/note`,
+      `${API}/api/admin/visitors/${encodeURIComponent(key)}/note`,
       {
         method: "PUT",
         headers: authHeaders(token),
@@ -314,17 +328,70 @@ export default function AdminPage() {
       setNoteEditingIp(null);
       setVisitors((prev) =>
         prev.map((v) =>
-          v.ip_hash === ipHash ? { ...v, note: noteText } : v
+          v.visitor_id === key ? { ...v, note: noteText } : v
         )
       );
       setOkMsg("备注已保存");
     }
   };
 
-  const openVisitor = (ipHash: string) => {
-    setSelectedIp(selectedIp === ipHash ? null : ipHash);
+  const openVisitor = (key: string) => {
+    setSelectedIp(selectedIp === key ? null : key);
     setVisitorRecords([]);
-    if (selectedIp !== ipHash) loadVisitorRecords(ipHash);
+    if (selectedIp !== key) loadVisitorRecords(key);
+  };
+
+  const deleteVisitRecord = async (visitId: number) => {
+    if (!token) return;
+    if (!confirm("确认删除这条访问记录？（总访问数不会变）")) return;
+    const res = await fetch(`${API}/api/admin/visits/${visitId}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    if (res.status === 401) {
+      logout();
+      return;
+    }
+    if (res.ok) {
+      // 从详情列表移除
+      setVisitorRecords((prev) => prev.filter((r) => r.id !== visitId));
+      // 更新聚合次数（-1，最少 0）；次数归零则从列表移除
+      setVisitors((prev) => {
+        const next = prev
+          .map((v) =>
+            v.visitor_id === selectedIp
+              ? { ...v, count: Math.max(0, v.count - 1) }
+              : v
+          )
+          .filter((v) => v.count > 0);
+        return next;
+      });
+      setOkMsg("已删除该记录（总访问数不变）");
+    }
+  };
+
+  const clearVisitorRecords = async (key: string) => {
+    if (!token) return;
+    if (
+      !confirm(
+        `确认清空该访客的全部访问记录？\n（总访问数不会变；备注会保留；该访客会从列表消失，直到再次访问）`
+      )
+    )
+      return;
+    const res = await fetch(
+      `${API}/api/admin/visitors/${encodeURIComponent(key)}/records`,
+      { method: "DELETE", headers: authHeaders(token) }
+    );
+    if (res.status === 401) {
+      logout();
+      return;
+    }
+    if (res.ok) {
+      setVisitorRecords([]);
+      setVisitors((prev) => prev.filter((v) => v.visitor_id !== key));
+      setSelectedIp(null);
+      setOkMsg("已清空该访客所有记录（总访问数不变）");
+    }
   };
 
   const loadLoginRecords = useCallback(async () => {
@@ -459,10 +526,17 @@ export default function AdminPage() {
       if (!visitQ.trim()) return true;
       const q = visitQ.toLowerCase();
       return (
+        (v.last_ip || "").toLowerCase().includes(q) ||
         (v.ip_hash || "").toLowerCase().includes(q) ||
         (v.note || "").toLowerCase().includes(q) ||
         (v.last_path || "").toLowerCase().includes(q) ||
-        (v.last_ua || "").toLowerCase().includes(q)
+        (v.last_ua || "").toLowerCase().includes(q) ||
+        (v.last_country || "").toLowerCase().includes(q) ||
+        (v.last_region || "").toLowerCase().includes(q) ||
+        (v.last_city || "").toLowerCase().includes(q) ||
+        (v.last_isp || "").toLowerCase().includes(q) ||
+        (v.last_os || "").toLowerCase().includes(q) ||
+        (v.last_browser || "").toLowerCase().includes(q)
       );
     });
   }, [visitors, visitQ, visitDevice]);
@@ -904,7 +978,7 @@ export default function AdminPage() {
               <table className="min-w-full text-left text-sm">
                 <thead className="border-b border-white/10 text-xs text-gray-500">
                   <tr>
-                    <th className="px-4 py-3">访客</th>
+                    <th className="px-4 py-3">访客 IP</th>
                     <th className="px-4 py-3">备注</th>
                     <th className="px-4 py-3">次数</th>
                     <th className="px-4 py-3">最后访问</th>
@@ -914,35 +988,51 @@ export default function AdminPage() {
                 </thead>
                 <tbody>
                   {filteredVisitors.map((v) => {
-                    const vc = hashColor(v.ip_hash);
-                    const isOpen = selectedIp === v.ip_hash;
+                    // 聚合 key：优先 visitor_id，旧数据回退 hash:ip_hash
+                    const vkey = v.visitor_id || `hash:${v.ip_hash}`;
+                    const vc = hashColor(v.visitor_id || v.ip_hash);
+                    const isOpen = selectedIp === vkey;
                     const recent = isRecent(v.last_at);
+                    const regionText = [
+                      v.last_country,
+                      v.last_region,
+                      v.last_city,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ");
                     return (
-                      <Fragment key={v.ip_hash}>
+                      <Fragment key={vkey}>
                         <tr
                           className={`cursor-pointer border-b border-white/5 text-gray-300 transition hover:bg-white/[0.03] ${
                             isOpen ? "bg-cyan-500/[0.06]" : ""
                           } ${recent ? "bg-emerald-500/[0.05]" : ""}`}
-                          onClick={() => openVisitor(v.ip_hash)}
+                          onClick={() => openVisitor(vkey)}
                         >
                           <td className="px-4 py-3">
-                            <span
-                              className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-mono text-[11px]"
-                              style={{
-                                color: vc,
-                                background: `${vc}1a`,
-                                border: `1px solid ${vc}40`,
-                              }}
-                              title={v.ip_hash}
-                            >
-                              {v.ip_hash ? v.ip_hash.slice(0, 8) : "—"}
-                              {recent && (
-                                <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                            <div className="flex flex-col gap-0.5">
+                              <span
+                                className="inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-0.5 font-mono text-[11px]"
+                                style={{
+                                  color: vc,
+                                  background: `${vc}1a`,
+                                  border: `1px solid ${vc}40`,
+                                }}
+                                title={v.last_ip || v.ip_hash}
+                              >
+                                {v.last_ip || v.ip_hash.slice(0, 8) || "—"}
+                                {recent && (
+                                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                                )}
+                              </span>
+                              {regionText && (
+                                <span className="text-[10px] text-gray-500">
+                                  {regionText}
+                                </span>
                               )}
-                            </span>
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-xs text-gray-400">
-                            {noteEditingIp === v.ip_hash ? (
+                            {noteEditingIp === vkey ? (
                               <span
                                 className="flex items-center gap-1"
                                 onClick={(e) => e.stopPropagation()}
@@ -957,7 +1047,7 @@ export default function AdminPage() {
                                 />
                                 <button
                                   type="button"
-                                  onClick={() => saveNote(v.ip_hash)}
+                                  onClick={() => saveNote(vkey)}
                                   className="text-cyan-300 hover:text-cyan-200"
                                 >
                                   ✓
@@ -967,7 +1057,7 @@ export default function AdminPage() {
                               <span
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setNoteEditingIp(v.ip_hash);
+                                  setNoteEditingIp(vkey);
                                   setNoteText(v.note || "");
                                 }}
                                 className="cursor-text hover:text-cyan-300"
@@ -1014,20 +1104,91 @@ export default function AdminPage() {
                         {isOpen && (
                           <tr className="bg-black/30">
                             <td colSpan={6} className="px-4 py-4">
+                              {/* 完整访客信息卡片 */}
+                              <div className="mb-3 grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg border border-cyan-400/20 bg-cyan-500/[0.04] p-3 text-xs sm:grid-cols-3">
+                                <div>
+                                  <span className="text-gray-500">IP：</span>
+                                  <span className="font-mono text-cyan-200">
+                                    {v.last_ip || "—"}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">地区：</span>
+                                  <span className="text-gray-300">
+                                    {[
+                                      v.last_country,
+                                      v.last_region,
+                                      v.last_city,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" · ") || "—"}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">运营商：</span>
+                                  <span className="text-gray-300">
+                                    {v.last_isp || "—"}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">设备：</span>
+                                  <span className="text-gray-300">
+                                    {v.last_device || "—"}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">系统：</span>
+                                  <span className="text-gray-300">
+                                    {v.last_os || "—"}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">浏览器：</span>
+                                  <span className="text-gray-300">
+                                    {v.last_browser || "—"}
+                                  </span>
+                                </div>
+                                <div className="col-span-2 sm:col-span-3">
+                                  <span className="text-gray-500">
+                                    visitor_id：
+                                  </span>
+                                  {v.visitor_id ? (
+                                    <span
+                                      className="break-all font-mono text-[10px] text-emerald-300/80"
+                                      title={v.visitor_id}
+                                    >
+                                      {v.visitor_id}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-gray-600">
+                                      —（旧记录，无永久标识）
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
                               <div className="mb-2 flex items-center justify-between">
                                 <span className="text-xs text-cyan-300">
-                                  {v.ip_hash} 的全部访问记录（
-                                  {visitorRecords.length} 条）
+                                  访客的全部访问记录（{visitorRecords.length}{" "}
+                                  条）
                                 </span>
-                                <span className="text-[10px] text-gray-600">
-                                  首次：
-                                  {v.first_at
-                                    ? new Date(v.first_at).toLocaleString(
-                                        "zh-CN",
-                                        { hour12: false }
-                                      )
-                                    : "—"}
-                                </span>
+                                <div className="flex items-center gap-3">
+                                  <span className="text-[10px] text-gray-600">
+                                    首次：
+                                    {v.first_at
+                                      ? new Date(v.first_at).toLocaleString(
+                                          "zh-CN",
+                                          { hour12: false }
+                                        )
+                                      : "—"}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => clearVisitorRecords(vkey)}
+                                    className="rounded border border-rose-400/40 px-2 py-0.5 text-[10px] text-rose-300 hover:bg-rose-500/10"
+                                  >
+                                    清空全部
+                                  </button>
+                                </div>
                               </div>
                               {loadingRecords ? (
                                 <div className="py-4 text-center text-xs text-gray-500">
@@ -1039,10 +1200,11 @@ export default function AdminPage() {
                                     <thead className="sticky top-0 bg-[#0a0618] text-gray-500">
                                       <tr>
                                         <th className="px-3 py-2">时间</th>
+                                        <th className="px-3 py-2">IP / 地区</th>
                                         <th className="px-3 py-2">路径</th>
                                         <th className="px-3 py-2">来源</th>
-                                        <th className="px-3 py-2">设备</th>
-                                        <th className="px-3 py-2">环境</th>
+                                        <th className="px-3 py-2">设备/系统/浏览器</th>
+                                        <th className="px-3 py-2 text-right">操作</th>
                                       </tr>
                                     </thead>
                                     <tbody>
@@ -1065,23 +1227,53 @@ export default function AdminPage() {
                                               : "—"}
                                           </td>
                                           <td className="px-3 py-1.5">
+                                            <div className="flex flex-col">
+                                              <span className="font-mono text-cyan-200">
+                                                {r.ip || "—"}
+                                              </span>
+                                              <span className="text-[10px] text-gray-500">
+                                                {[
+                                                  r.country,
+                                                  r.region,
+                                                  r.city,
+                                                ]
+                                                  .filter(Boolean)
+                                                  .join(" · ") || "—"}
+                                              </span>
+                                            </div>
+                                          </td>
+                                          <td className="px-3 py-1.5">
                                             {parsePath(r.path)}
                                           </td>
                                           <td className="px-3 py-1.5">
                                             {parseReferrer(r.referrer)}
                                           </td>
                                           <td className="px-3 py-1.5">
-                                            {r.device}
+                                            <div className="flex flex-col gap-0.5">
+                                              <span>{r.device || "—"}</span>
+                                              <span className="text-[10px] text-gray-500">
+                                                {r.os || "—"} ·{" "}
+                                                {r.browser || "—"}
+                                              </span>
+                                            </div>
                                           </td>
-                                          <td className="px-3 py-1.5">
-                                            {parseUA(r.ua)}
+                                          <td className="whitespace-nowrap px-3 py-1.5 text-right">
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                deleteVisitRecord(r.id)
+                                              }
+                                              className="rounded border border-rose-400/40 px-2 py-0.5 text-[10px] text-rose-300 hover:bg-rose-500/15"
+                                            >
+                                              删除
+                                            </button>
                                           </td>
                                         </tr>
                                       ))}
                                       {!visitorRecords.length && (
                                         <tr>
                                           <td
-                                            colSpan={5}
+                                            colSpan={6}
                                             className="px-3 py-4 text-center text-gray-600"
                                           >
                                             无记录

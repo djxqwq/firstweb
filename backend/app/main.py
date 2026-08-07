@@ -35,7 +35,9 @@ from sqlalchemy import (
     Text,
     create_engine,
     func,
+    inspect as sqlalchemy_inspect,
     select,
+    text as sqlalchemy_text,
 )
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
@@ -113,10 +115,19 @@ class Visit(Base):
     __tablename__ = "visits"
     id = Column(Integer, primary_key=True, index=True)
     ip_hash = Column(String(64), default="")
+    visitor_id = Column(String(64), default="", index=True)
+    ip = Column(String(64), default="")
+    country = Column(String(64), default="")
+    region = Column(String(64), default="")
+    city = Column(String(64), default="")
+    isp = Column(String(128), default="")
+    os = Column(String(64), default="")
+    browser = Column(String(64), default="")
     ua = Column(String(512), default="")
     path = Column(String(255), default="/")
     referrer = Column(String(512), default="")
     device = Column(String(64), default="")
+    deleted = Column(Boolean, default=False, index=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
@@ -135,10 +146,10 @@ class ProjectClick(Base):
 
 
 class VisitorNote(Base):
-    """访客备注 —— 给某个 ip_hash 打标签/备注，方便识别回头客。"""
+    """访客备注 —— 按 visitor_id 打标签/备注，IP 变了备注依然在。"""
     __tablename__ = "visitor_notes"
     id = Column(Integer, primary_key=True, index=True)
-    ip_hash = Column(String(64), unique=True, index=True, nullable=False)
+    visitor_id = Column(String(64), unique=True, index=True, nullable=False)
     note = Column(Text, default="")
     updated_at = Column(
         DateTime,
@@ -218,6 +229,7 @@ class VisitIn(BaseModel):
     path: str = "/"
     referrer: str = ""
     device: str = ""
+    visitor_id: str = ""
 
 
 class SettingsIn(BaseModel):
@@ -499,11 +511,147 @@ def on_startup() -> None:
             print(f"[warn] auto-create database failed: {e}")
 
     Base.metadata.create_all(bind=engine, checkfirst=True)
+    # 轻量迁移：给已存在的 visits / visitor_notes 表补全新增字段（create_all 不会改已有表）
+    _migrate_visits_table(engine)
+    _migrate_visitor_notes_table(engine)
     db = SessionLocal()
     try:
         seed_if_empty(db)
     finally:
         db.close()
+
+
+def _migrate_visits_table(engine) -> None:
+    """给 visits 表补全新增列，已存在则跳过。兼容 SQLite/TiDB/MySQL。"""
+    cols = {
+        "visitor_id": "VARCHAR(64) DEFAULT ''",
+        "ip": "VARCHAR(64) DEFAULT ''",
+        "country": "VARCHAR(64) DEFAULT ''",
+        "region": "VARCHAR(64) DEFAULT ''",
+        "city": "VARCHAR(64) DEFAULT ''",
+        "isp": "VARCHAR(128) DEFAULT ''",
+        "os": "VARCHAR(64) DEFAULT ''",
+        "browser": "VARCHAR(64) DEFAULT ''",
+        "deleted": "BOOLEAN DEFAULT 0",
+    }
+    with engine.connect() as conn:
+        # 取现有列名
+        try:
+            inspector = sqlalchemy_inspect(conn)
+            existing = {c["name"] for c in inspector.get_columns("visits")}
+        except Exception:
+            existing = set()
+        for col, ddl in cols.items():
+            if col in existing:
+                continue
+            try:
+                conn.execute(
+                    sqlalchemy_text(f"ALTER TABLE visits ADD COLUMN {col} {ddl}")
+                )
+                conn.commit()
+            except Exception as e:
+                # 字段已存在或其他兼容问题，忽略
+                conn.rollback()
+        # 给新列建索引（若不存在）
+        try:
+            inspector = sqlalchemy_inspect(conn)
+            idx_existing = {i["name"] for i in inspector.get_indexes("visits")}
+        except Exception:
+            idx_existing = set()
+        for idx_name, col in (
+            ("ix_visits_visitor_id", "visitor_id"),
+            ("ix_visits_deleted", "deleted"),
+        ):
+            if idx_name in idx_existing:
+                continue
+            try:
+                conn.execute(
+                    sqlalchemy_text(f"CREATE INDEX {idx_name} ON visits ({col})")
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+
+
+def _migrate_visitor_notes_table(engine) -> None:
+    """把 visitor_notes 表从 ip_hash 迁移到 visitor_id。
+
+    旧表用 ip_hash 作唯一键；新模型用 visitor_id。这里：
+    1. 若表不存在则跳过（create_all 会建新表）。
+    2. 若旧表只有 ip_hash 列没有 visitor_id 列，补上 visitor_id 列，
+       并把旧 ip_hash 数据转成 'hash:{ip_hash}' 写入 visitor_id，
+       这样旧访客（聚合 key 为 hash:ip_hash）的备注仍能匹配上。
+    """
+    with engine.connect() as conn:
+        try:
+            inspector = sqlalchemy_inspect(conn)
+            cols = {c["name"] for c in inspector.get_columns("visitor_notes")}
+        except Exception:
+            return  # 表不存在，create_all 会建
+
+        # 补 visitor_id 列（若缺）
+        if "visitor_id" not in cols:
+            try:
+                conn.execute(
+                    sqlalchemy_text(
+                        "ALTER TABLE visitor_notes ADD COLUMN visitor_id VARCHAR(64) DEFAULT ''"
+                    )
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+
+            # 把旧 ip_hash 数据迁移到 visitor_id（加 hash: 前缀，跨库兼容写法）
+            try:
+                rows = conn.execute(
+                    sqlalchemy_text(
+                        "SELECT ip_hash FROM visitor_notes "
+                        "WHERE (visitor_id = '' OR visitor_id IS NULL) "
+                        "AND ip_hash IS NOT NULL AND ip_hash != ''"
+                    )
+                ).fetchall()
+                for (ip_hash,) in rows:
+                    conn.execute(
+                        sqlalchemy_text(
+                            "UPDATE visitor_notes SET visitor_id = :vid "
+                            "WHERE ip_hash = :ih AND (visitor_id = '' OR visitor_id IS NULL)"
+                        ),
+                        {"vid": f"hash:{ip_hash}", "ih": ip_hash},
+                    )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+
+        # 给 visitor_id 建唯一索引（若不存在）
+        try:
+            inspector = sqlalchemy_inspect(conn)
+            idx_existing = {
+                i["name"] for i in inspector.get_indexes("visitor_notes")
+            }
+        except Exception:
+            idx_existing = set()
+        if "uq_visitor_notes_visitor_id" not in idx_existing and "ix_visitor_notes_visitor_id" not in idx_existing:
+            # MySQL/TiDB 支持 CREATE UNIQUE INDEX IF NOT EXISTS；SQLite 不支持 IF NOT EXISTS，try/except 兜底
+            try:
+                conn.execute(
+                    sqlalchemy_text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_visitor_notes_visitor_id "
+                        "ON visitor_notes (visitor_id)"
+                    )
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                try:
+                    conn.execute(
+                        sqlalchemy_text(
+                            "CREATE UNIQUE INDEX uq_visitor_notes_visitor_id "
+                            "ON visitor_notes (visitor_id)"
+                        )
+                    )
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
 
 
 # ---- Public ----
@@ -882,12 +1030,14 @@ def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)
     ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:16]
     ua = (request.headers.get("user-agent") or "")[:512]
     path = payload.path[:255]
+    visitor_id = (payload.visitor_id or "").strip()[:64]
 
-    # 去重：同 IP + 同路径在窗口内已记录过则跳过，避免刷新刷量
+    # 去重：同一 visitor_id（或回退到 ip_hash）+ 同路径在窗口内已记录过则跳过
+    dedup_key = visitor_id or ip_hash
     threshold = datetime.now(timezone.utc) - timedelta(seconds=VISIT_DEDUP_SECONDS)
     already = db.scalar(
         select(Visit.id).where(
-            Visit.ip_hash == ip_hash,
+            Visit.visitor_id == dedup_key if visitor_id else Visit.ip_hash == ip_hash,
             Visit.path == path,
             Visit.created_at >= threshold,
         ).limit(1)
@@ -895,9 +1045,20 @@ def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)
     if already:
         return {"ok": True, "dedup": True}
 
+    # 查询地理信息 + 解析 UA，存完整访客信息
+    geo = lookup_ip_geo(ip)
+    bo = parse_browser_os(ua)
     db.add(
         Visit(
             ip_hash=ip_hash,
+            visitor_id=visitor_id,
+            ip=ip[:64],
+            country=geo.get("country", "")[:64],
+            region=geo.get("region", "")[:64],
+            city=geo.get("city", "")[:64],
+            isp=geo.get("isp", "")[:128],
+            os=bo["os"][:64],
+            browser=bo["browser"][:64],
             ua=ua,
             path=path,
             referrer=payload.referrer[:512],
@@ -910,8 +1071,13 @@ def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)
 
 @app.get("/api/visits/stats")
 def visit_stats(db: Session = Depends(get_db)):
+    # 总数统计不加 deleted 过滤 → 删除记录不影响历史累计总数
     total = db.scalar(select(func.count()).select_from(Visit)) or 0
-    unique = db.scalar(select(func.count(func.distinct(Visit.ip_hash)))) or 0
+    unique = db.scalar(
+        select(func.count(func.distinct(Visit.visitor_id))).where(
+            Visit.visitor_id != ""
+        )
+    ) or 0
     rows = db.execute(
         select(func.date(Visit.created_at), func.count())
         .group_by(func.date(Visit.created_at))
@@ -1172,20 +1338,39 @@ def admin_visits(
 def admin_visitors(
     db: Session = Depends(get_db), _: Admin = Depends(get_current_admin)
 ):
-    """按 IP 聚合访客：每个 IP 一行，含访问次数/首末时间/备注/最新行为，按最后访问倒序。"""
-    rows = db.scalars(select(Visit).order_by(Visit.id.desc()).limit(3000)).all()
-    notes = {n.ip_hash: n.note for n in db.scalars(select(VisitorNote)).all()}
+    """按 visitor_id 聚合访客（同一人即使 IP 变了也归为一条）。
+
+    只统计未被软删除的记录；返回最新一条记录的完整访客信息。
+    总访问数请看 /api/visits/stats（不受软删除影响）。
+    """
+    rows = db.scalars(
+        select(Visit)
+        .where(Visit.deleted.is_(False))
+        .order_by(Visit.id.desc())
+        .limit(5000)
+    ).all()
+    notes = {n.visitor_id: n.note for n in db.scalars(select(VisitorNote)).all()}
     agg: dict[str, dict] = {}
     for r in rows:
-        key = r.ip_hash or "unknown"
+        # 优先 visitor_id 聚合；旧数据无 visitor_id 时回退 ip_hash
+        key = r.visitor_id or f"hash:{r.ip_hash}" or "unknown"
         a = agg.get(key)
         if a is None:
             a = {
-                "ip_hash": key,
+                "visitor_id": r.visitor_id or "",
+                "ip_hash": r.ip_hash or "",
                 "note": notes.get(key, ""),
                 "count": 0,
                 "first_at": r.created_at,
                 "last_at": r.created_at,
+                # 最新一条的完整访客信息
+                "last_ip": r.ip or "",
+                "last_country": r.country or "",
+                "last_region": r.region or "",
+                "last_city": r.city or "",
+                "last_isp": r.isp or "",
+                "last_os": r.os or "",
+                "last_browser": r.browser or "",
                 "last_device": r.device,
                 "last_path": r.path,
                 "last_referrer": r.referrer,
@@ -1198,6 +1383,13 @@ def admin_visitors(
                 a["first_at"] = r.created_at
             if r.created_at > a["last_at"]:
                 a["last_at"] = r.created_at
+                a["last_ip"] = r.ip or ""
+                a["last_country"] = r.country or ""
+                a["last_region"] = r.region or ""
+                a["last_city"] = r.city or ""
+                a["last_isp"] = r.isp or ""
+                a["last_os"] = r.os or ""
+                a["last_browser"] = r.browser or ""
                 a["last_device"] = r.device
                 a["last_path"] = r.path
                 a["last_referrer"] = r.referrer
@@ -1218,23 +1410,34 @@ def admin_visitors(
     return result
 
 
-@app.get("/api/admin/visitors/{ip_hash}/records")
+@app.get("/api/admin/visitors/{key}/records")
 def admin_visitor_records(
-    ip_hash: str,
+    key: str,
     limit: int = 500,
     db: Session = Depends(get_db),
     _: Admin = Depends(get_current_admin),
 ):
-    """查看某个访客的所有访问记录（按时间倒序）。"""
-    rows = db.scalars(
-        select(Visit)
-        .where(Visit.ip_hash == ip_hash)
-        .order_by(Visit.id.desc())
-        .limit(min(max(limit, 1), 2000))
-    ).all()
+    """查看某个访客的所有访问记录（按时间倒序）。
+
+    key 可以是 visitor_id（优先）或回退到 ip_hash。只返回未软删除的记录。
+    """
+    q = select(Visit).where(Visit.deleted.is_(False))
+    # 优先按 visitor_id 匹配；若 key 以 hash: 前缀开头则按 ip_hash 匹配
+    if key.startswith("hash:"):
+        q = q.where(Visit.ip_hash == key[5:])
+    else:
+        q = q.where(Visit.visitor_id == key)
+    rows = db.scalars(q.order_by(Visit.id.desc()).limit(min(max(limit, 1), 2000))).all()
     return [
         {
             "id": r.id,
+            "ip": r.ip or "",
+            "country": r.country or "",
+            "region": r.region or "",
+            "city": r.city or "",
+            "isp": r.isp or "",
+            "os": r.os or "",
+            "browser": r.browser or "",
             "ua": r.ua,
             "path": r.path,
             "referrer": r.referrer,
@@ -1247,19 +1450,58 @@ def admin_visitor_records(
     ]
 
 
-@app.put("/api/admin/visitors/{ip_hash}/note")
+@app.put("/api/admin/visitors/{key}/note")
 def admin_visitor_note(
-    ip_hash: str,
+    key: str,
     payload: VisitorNoteIn,
     db: Session = Depends(get_db),
     _: Admin = Depends(get_current_admin),
 ):
-    """给某个访客 IP 设置备注。"""
-    existing = db.scalar(select(VisitorNote).where(VisitorNote.ip_hash == ip_hash))
+    """给某个访客设置备注。
+
+    key 可以是 visitor_id（新访客）或 hash:ip_hash（旧访客，无 visitor_id）。
+    备注按 key 绑定：新访客 IP 变了备注仍在；旧访客备注绑定到 hash:ip_hash。
+    """
+    existing = db.scalar(select(VisitorNote).where(VisitorNote.visitor_id == key))
     if existing:
         existing.note = payload.note[:500]
     else:
-        db.add(VisitorNote(ip_hash=ip_hash, note=payload.note[:500]))
+        db.add(VisitorNote(visitor_id=key, note=payload.note[:500]))
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/admin/visits/{visit_id}")
+def admin_visit_delete(
+    visit_id: int,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(get_current_admin),
+):
+    """软删除单条访问记录——总数统计不变，只是从列表/详情里隐藏。"""
+    row = db.scalar(select(Visit).where(Visit.id == visit_id))
+    if not row:
+        return {"ok": False, "msg": "记录不存在"}
+    row.deleted = True
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/admin/visitors/{key}/records")
+def admin_visitor_records_clear(
+    key: str,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(get_current_admin),
+):
+    """软删除某个访客的全部访问记录——总数统计不变，该访客从聚合列表消失。
+
+    备注保留；下次该访客再访问会重新出现。
+    """
+    q = db.query(Visit).filter(Visit.deleted.is_(False))
+    if key.startswith("hash:"):
+        q = q.filter(Visit.ip_hash == key[5:])
+    else:
+        q = q.filter(Visit.visitor_id == key)
+    q.update({Visit.deleted: True}, synchronize_session=False)
     db.commit()
     return {"ok": True}
 
