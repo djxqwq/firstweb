@@ -1,9 +1,9 @@
 # ===== 构建阶段 =====
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm ci --no-audit --no-fund --prefer-offline 2>&1
 
 COPY . .
 ENV NEXT_PUBLIC_API_BASE=""
@@ -11,7 +11,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 # ===== 运行阶段 =====
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
