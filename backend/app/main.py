@@ -460,7 +460,7 @@ def on_startup() -> None:
         except Exception as e:
             print(f"[warn] auto-create database failed: {e}")
 
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=engine, checkfirst=True)
     db = SessionLocal()
     try:
         seed_if_empty(db)
