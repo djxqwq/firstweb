@@ -10,6 +10,10 @@ services:
     restart: unless-stopped
     networks:
       - blog-net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
   frontend:
     build: ./frontend
@@ -17,6 +21,7 @@ services:
     environment:
       - NEXT_PUBLIC_API_BASE=
       - NODE_ENV=production
+      - NODE_OPTIONS=--max-old-space-size=256
     ports:
       - "127.0.0.1:3000:3000"
     restart: unless-stopped
@@ -24,6 +29,10 @@ services:
       - backend
     networks:
       - blog-net
+    deploy:
+      resources:
+        limits:
+          memory: 384M
 
 volumes:
   backend-uploads:

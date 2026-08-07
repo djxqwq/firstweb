@@ -46,6 +46,20 @@ fi
 $SUDO apt-get update -qq
 $SUDO apt-get install -y -qq nginx certbot python3-certbot-nginx curl > /dev/null
 
+# ---- 1.5 添加 swap（1GB 小内存服务器必需）----
+echo "[1.5/6] 配置 swap（解决内存不足）..."
+if ! swapon --show | grep -q swapfile; then
+    $SUDO fallocate -l 2G /swapfile
+    $SUDO chmod 600 /swapfile
+    $SUDO mkswap /swapfile
+    $SUDO swapon /swapfile
+    echo '/swapfile none swap sw 0 0' | $SUDO tee -a /etc/fstab
+    echo "  ✓ swap 已创建（2GB）"
+else
+    echo "  ✓ swap 已存在"
+fi
+free -h | grep Swap
+
 # ---- 2. 检查项目目录 ----
 echo "[2/6] 检查项目目录..."
 if [ ! -f "$PROJECT_DIR/docker-compose.yml" ]; then

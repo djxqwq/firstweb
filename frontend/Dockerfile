@@ -2,6 +2,9 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
 
+# 限制 Node.js 内存（1GB 服务器只能用 512MB）
+ENV NODE_OPTIONS="--max-old-space-size=512"
+
 COPY package.json package-lock.json* ./
 RUN npm ci --no-audit --no-fund --prefer-offline 2>&1
 
@@ -19,6 +22,7 @@ ENV NEXT_PUBLIC_API_BASE=""
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
+ENV NODE_OPTIONS="--max-old-space-size=256"
 
 # standalone 输出
 COPY --from=builder /app/.next/standalone ./
