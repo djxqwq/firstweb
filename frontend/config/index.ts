@@ -17,4 +17,9 @@ export const siteConfig: Metadata = {
     name: "邓锦鑫",
     url: "https://github.com/djxqwq",
   },
+  icons: {
+    icon: "/icon.png",
+    shortcut: "/icon.png",
+    apple: "/icon.png",
+  },
 } as const;

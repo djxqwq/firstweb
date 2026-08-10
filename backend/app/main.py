@@ -12,6 +12,7 @@ import io
 import json
 import os
 import secrets
+import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -960,17 +961,23 @@ def detect_device(ua: str) -> str:
 # ip-api.com 已知返回错误城市名的列表（这些不是真实城市名）
 _BAD_CITY_NAMES = {"南市", "Unknown", "unknown", ""}
 
+# IP 地理位置内存缓存（避免对同一 IP 重复请求外部 API）
+_geo_cache: dict[str, tuple[float, dict]] = {}
+_GEO_CACHE_TTL = 3600  # 1 小时
+
 
 def lookup_ip_geo(ip: str) -> dict:
     """查询 IP 地理位置。
 
-    策略（三源融合）：
+    策略（四源融合）：
     1. ip-api.com — 全球覆盖，中文语言，但中国城市级数据不准确（如把杭州标成"南市"）
     2. pconline（太平洋电脑网）— 中国 IP 专用，城市级数据准确，但区县经常为空
        注意：必须用 HTTPS，HTTP 会返回 403
     3. ipinfo.io — 第三方补充，有时有不同精度的数据
+    4. Nominatim 逆地理编码 — 用 ip-api.com 返回的经纬度反查区县（免费、无需 key）
 
     本地/内网 IP 直接返回空字典，不发起外网请求。
+    结果缓存 1 小时，避免对同一 IP 重复请求。
     """
     if not ip or ip in ("127.0.0.1", "localhost", "::1", ""):
         return {}
@@ -978,13 +985,19 @@ def lookup_ip_geo(ip: str) -> dict:
     if ip.startswith(("10.", "172.", "192.168.", "169.254.")):
         return {}
 
+    # 缓存命中
+    now = time.time()
+    cached = _geo_cache.get(ip)
+    if cached and now - cached[0] < _GEO_CACHE_TTL:
+        return cached[1].copy()
+
     result: dict = {}
 
-    # 1. ip-api.com（全球覆盖，中文语言）
+    # 1. ip-api.com（全球覆盖，中文语言）— 同时获取经纬度用于后续逆地理编码
     try:
         url = (
             f"http://ip-api.com/json/{ip}"
-            "?lang=zh-CN&fields=status,country,regionName,city,district,isp,query"
+            "?lang=zh-CN&fields=status,country,regionName,city,district,isp,query,lat,lon"
         )
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=3) as resp:
@@ -1000,6 +1013,8 @@ def lookup_ip_geo(ip: str) -> dict:
                 "city": city,
                 "district": data.get("district", ""),
                 "isp": data.get("isp", ""),
+                "_lat": data.get("lat"),
+                "_lon": data.get("lon"),
             }
     except Exception:
         pass
@@ -1039,6 +1054,21 @@ def lookup_ip_geo(ip: str) -> dict:
                 # 区/县信息
                 if region2:
                     result["district"] = region2
+                # 如果 region 为空，尝试从 addr 中提取区县
+                if not result.get("district") and addr:
+                    addr_clean = addr
+                    if pro:
+                        addr_clean = addr_clean.replace(pro, "")
+                    if city:
+                        addr_clean = addr_clean.replace(city, "")
+                    for sp in ("联通", "电信", "移动", "铁通", "长城", "广电", "教育网"):
+                        addr_clean = addr_clean.replace(sp, "")
+                    addr_clean = addr_clean.strip()
+                    if addr_clean and 2 <= len(addr_clean) <= 6 and (
+                        "区" in addr_clean or "县" in addr_clean
+                        or "市" in addr_clean or "旗" in addr_clean
+                    ):
+                        result["district"] = addr_clean
                 # 如果 addr 有 ISP 信息且 ip-api 没返回 ISP，用 addr 补充
                 if not result.get("isp") and addr:
                     # addr 格式如 "浙江省杭州市联通"，提取运营商
@@ -1122,6 +1152,43 @@ def lookup_ip_geo(ip: str) -> dict:
                             break
         except Exception:
             pass
+
+    # 4. Nominatim 逆地理编码 — 如果区县仍为空，用 ip-api.com 的经纬度反查
+    #    Nominatim (OpenStreetMap) 免费且无需 API key，对中国数据覆盖良好
+    #    其 address.city 字段在中国常返回区县名（如"西湖区"）
+    if result.get("country") and not result.get("district") and result.get("_lat"):
+        try:
+            lat = result["_lat"]
+            lon = result["_lon"]
+            url4 = (
+                f"https://nominatim.openstreetmap.org/reverse"
+                f"?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=zh-CN"
+            )
+            req4 = urllib.request.Request(
+                url4,
+                headers={"User-Agent": "PersonalWebsite/1.0 (geolocation)"},
+            )
+            with urllib.request.urlopen(req4, timeout=5) as resp4:
+                data4 = json.loads(resp4.read().decode("utf-8"))
+            addr4 = data4.get("address", {})
+            # Nominatim 在中国数据中，city 字段通常返回区县名（如"西湖区"）
+            district_candidate = (
+                addr4.get("city", "")
+                or addr4.get("county", "")
+                or addr4.get("borough", "")
+                or addr4.get("suburb", "")
+            )
+            if district_candidate and len(district_candidate) <= 10:
+                result["district"] = district_candidate
+        except Exception:
+            pass
+
+    # 清理内部字段，不返回给调用方
+    result.pop("_lat", None)
+    result.pop("_lon", None)
+
+    # 写入缓存
+    _geo_cache[ip] = (now, result.copy())
 
     return result
 
@@ -1533,6 +1600,20 @@ async def admin_upload(
     # 新文件保存成功后，删除旧文件以节省空间
     delete_upload_file(old_url)
     return {"url": f"/uploads/{name}", "name": raw_name, "size": len(content)}
+
+
+class DeleteFileIn(BaseModel):
+    url: str
+
+
+@app.post("/api/admin/uploads/delete")
+def admin_delete_upload(
+    payload: DeleteFileIn,
+    _: Admin = Depends(get_current_admin),
+):
+    """删除 /uploads/ 下的指定文件（音乐、封面等）。"""
+    delete_upload_file(payload.url)
+    return {"ok": True}
 
 
 @app.get("/api/admin/visits")

@@ -210,7 +210,7 @@ export default function AdminPage() {
   const [musicEnabled, setMusicEnabled] = useState(true);
   const [musicVolume, setMusicVolume] = useState(0.4);
   const [musicTracks, setMusicTracks] = useState<
-    { id: string; title: string; url: string }[]
+    { id: string; title: string; url: string; cover?: string }[]
   >([]);
   const [musicUploading, setMusicUploading] = useState(false);
   const [loginRecords, setLoginRecords] = useState<LoginRecord[]>([]);
@@ -343,9 +343,10 @@ export default function AdminPage() {
     if (res.ok) {
       setNoteEditingIp(null);
       setVisitors((prev) =>
-        prev.map((v) =>
-          v.visitor_id === key ? { ...v, note: noteText } : v
-        )
+        prev.map((v) => {
+          const computedKey = v.visitor_id || `hash:${v.ip_hash}`;
+          return computedKey === key ? { ...v, note: noteText } : v;
+        })
       );
       setOkMsg("备注已保存");
     }
@@ -459,12 +460,13 @@ export default function AdminPage() {
         Array.isArray(m.tracks)
           ? m.tracks.map(
               (
-                t: { id?: string; title?: string; url?: string; src?: string },
+                t: { id?: string; title?: string; url?: string; src?: string; cover?: string },
                 i: number
               ) => ({
                 id: t.id || `t-${i}`,
                 title: t.title || `曲目 ${i + 1}`,
                 url: t.url || t.src || "",
+                cover: t.cover || "",
               })
             )
           : []
@@ -764,6 +766,7 @@ export default function AdminPage() {
         id: `up-${Date.now()}`,
         title,
         url: data.url,
+        cover: "",
       };
       const updatedTracks = [...musicTracks.filter((t) => t.url), newTrack];
       setMusicTracks(updatedTracks);
@@ -792,6 +795,84 @@ export default function AdminPage() {
     } finally {
       setMusicUploading(false);
     }
+  };
+
+  const uploadTrackCover = async (trackId: string, file: File) => {
+    if (!token) return;
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${API}/api/admin/upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      });
+      if (!res.ok) {
+        setError("封面上传失败");
+        return;
+      }
+      const data = await res.json();
+      const updatedTracks = musicTracks.map((t) =>
+        t.id === trackId ? { ...t, cover: data.url } : t
+      );
+      setMusicTracks(updatedTracks);
+      // 自动保存
+      const saveRes = await fetch(`${API}/api/admin/settings`, {
+        method: "PUT",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          site_title: siteTitle,
+          effects: { fluid: true, snake: true, eggs: true },
+          music: {
+            enabled: musicEnabled,
+            volume: musicVolume,
+            tracks: updatedTracks,
+          },
+        }),
+      });
+      if (saveRes.ok) setOkMsg("封面已更新并自动保存");
+    } catch {
+      setError("封面上传失败");
+    }
+  };
+
+  const removeTrack = async (trackId: string) => {
+    const track = musicTracks.find((t) => t.id === trackId);
+    if (!track) return;
+    // 删除后端音乐文件和封面文件
+    try {
+      await fetch(`${API}/api/admin/uploads/delete`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ url: track.url }),
+      });
+      if (track.cover) {
+        await fetch(`${API}/api/admin/uploads/delete`, {
+          method: "POST",
+          headers: authHeaders(token),
+          body: JSON.stringify({ url: track.cover }),
+        });
+      }
+    } catch {
+      // 文件删除失败不阻止前端删除
+    }
+    const updatedTracks = musicTracks.filter((t) => t.id !== trackId);
+    setMusicTracks(updatedTracks);
+    // 自动保存
+    const saveRes = await fetch(`${API}/api/admin/settings`, {
+      method: "PUT",
+      headers: authHeaders(token),
+      body: JSON.stringify({
+        site_title: siteTitle,
+        effects: { fluid: true, snake: true, eggs: true },
+        music: {
+          enabled: musicEnabled,
+          volume: musicVolume,
+          tracks: updatedTracks,
+        },
+      }),
+    });
+    if (saveRes.ok) setOkMsg("已删除曲目（含文件）并自动保存");
   };
 
   const save = async (e: FormEvent) => {
@@ -1646,6 +1727,36 @@ export default function AdminPage() {
                     key={t.id}
                     className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/30 px-2 py-2"
                   >
+                    {/* 封面缩略图 + 上传 */}
+                    <label className="group/cover relative flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-black/40">
+                      {t.cover ? (
+                        <img
+                          src={t.cover.startsWith("/uploads/")
+                            ? `${API}${t.cover}`
+                            : t.cover}
+                          alt=""
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <svg viewBox="0 0 24 24" className="h-4 w-4 fill-gray-600">
+                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2V7zm0 8h2v2h-2v-2z" />
+                        </svg>
+                      )}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) uploadTrackCover(t.id, f);
+                          e.target.value = "";
+                        }}
+                      />
+                      <span className="absolute inset-0 flex items-center justify-center bg-black/60 text-[9px] text-white opacity-0 transition group-hover/cover:opacity-100">
+                        换封面
+                      </span>
+                    </label>
+                    {/* 标题输入 */}
                     <input
                       className="min-w-0 flex-1 rounded-md border border-white/10 bg-transparent px-2 py-1 text-sm text-white outline-none"
                       value={t.title}
@@ -1657,14 +1768,10 @@ export default function AdminPage() {
                         )
                       }
                     />
-                    <span className="max-w-[120px] truncate font-mono text-[10px] text-gray-500">
-                      {t.url}
-                    </span>
+                    {/* 删除按钮（同时删后端文件） */}
                     <button
                       type="button"
-                      onClick={() =>
-                        setMusicTracks((prev) => prev.filter((_, j) => j !== i))
-                      }
+                      onClick={() => removeTrack(t.id)}
                       className="rounded-md px-2 py-1 text-xs text-rose-300 hover:bg-rose-500/10"
                     >
                       删
