@@ -184,7 +184,7 @@ export const Contact = () => {
                 <InfoRow
                   label="地区"
                   value={
-                    [myInfo.country, myInfo.region, myInfo.city]
+                    [myInfo.country, myInfo.region, myInfo.city, myInfo.district]
                       .filter(Boolean)
                       .join(" · ") || "未知"
                   }

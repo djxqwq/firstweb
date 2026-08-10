@@ -51,6 +51,7 @@ export type MyInfo = {
   country: string;
   region: string;
   city: string;
+  district?: string;
   isp: string;
   device: string;
   os: string;

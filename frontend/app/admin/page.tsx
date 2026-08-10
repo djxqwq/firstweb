@@ -43,6 +43,7 @@ type VisitItem = {
   country: string;
   region: string;
   city: string;
+  district?: string;
   isp: string;
   os: string;
   browser: string;
@@ -64,6 +65,7 @@ type VisitorAgg = {
   last_country: string;
   last_region: string;
   last_city: string;
+  last_district?: string;
   last_isp: string;
   last_os: string;
   last_browser: string;
@@ -544,6 +546,7 @@ export default function AdminPage() {
         (v.last_country || "").toLowerCase().includes(q) ||
         (v.last_region || "").toLowerCase().includes(q) ||
         (v.last_city || "").toLowerCase().includes(q) ||
+        (v.last_district || "").toLowerCase().includes(q) ||
         (v.last_isp || "").toLowerCase().includes(q) ||
         (v.last_os || "").toLowerCase().includes(q) ||
         (v.last_browser || "").toLowerCase().includes(q)
@@ -1103,6 +1106,7 @@ export default function AdminPage() {
                       v.last_country,
                       v.last_region,
                       v.last_city,
+                      v.last_district,
                     ]
                       .filter(Boolean)
                       .join(" · ");
@@ -1230,6 +1234,7 @@ export default function AdminPage() {
                                       v.last_country,
                                       v.last_region,
                                       v.last_city,
+                                      v.last_district,
                                     ]
                                       .filter(Boolean)
                                       .join(" · ") || "—"}
@@ -1347,6 +1352,7 @@ export default function AdminPage() {
                                                   r.country,
                                                   r.region,
                                                   r.city,
+                                                  r.district,
                                                 ]
                                                   .filter(Boolean)
                                                   .join(" · ") || "—"}

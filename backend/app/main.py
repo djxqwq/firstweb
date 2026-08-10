@@ -121,6 +121,7 @@ class Visit(Base):
     country = Column(String(64), default="")
     region = Column(String(64), default="")
     city = Column(String(64), default="")
+    district = Column(String(64), default="")
     isp = Column(String(128), default="")
     os = Column(String(64), default="")
     browser = Column(String(64), default="")
@@ -535,6 +536,7 @@ def _migrate_visits_table(engine) -> None:
         "country": "VARCHAR(64) DEFAULT ''",
         "region": "VARCHAR(64) DEFAULT ''",
         "city": "VARCHAR(64) DEFAULT ''",
+        "district": "VARCHAR(64) DEFAULT ''",
         "isp": "VARCHAR(128) DEFAULT ''",
         "os": "VARCHAR(64) DEFAULT ''",
         "browser": "VARCHAR(64) DEFAULT ''",
@@ -956,7 +958,11 @@ def detect_device(ua: str) -> str:
 
 
 def lookup_ip_geo(ip: str) -> dict:
-    """通过 ip-api.com 免费查询 IP 地理位置（限 45 次/分钟，无需密钥）。
+    """查询 IP 地理位置。
+
+    策略：先用 ip-api.com 查询（全球覆盖），如果是中国 IP 再用太平洋电脑网
+    API 补查更准确的城市数据（ip-api.com 对中国城市级别数据不准确，
+    如把杭州某些 IP 段标成"南市"）。
 
     本地/内网 IP 直接返回空字典，不发起外网请求。
     """
@@ -965,24 +971,61 @@ def lookup_ip_geo(ip: str) -> dict:
     # 内网网段不查询
     if ip.startswith(("10.", "172.", "192.168.", "169.254.")):
         return {}
+
+    result: dict = {}
+
+    # 1. ip-api.com（全球覆盖，中文语言）
     try:
         url = (
             f"http://ip-api.com/json/{ip}"
-            "?lang=zh-CN&fields=status,country,regionName,city,isp,query"
+            "?lang=zh-CN&fields=status,country,regionName,city,district,isp,query"
         )
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         if data.get("status") == "success":
-            return {
+            result = {
                 "country": data.get("country", ""),
                 "region": data.get("regionName", ""),
                 "city": data.get("city", ""),
+                "district": data.get("district", ""),
                 "isp": data.get("isp", ""),
             }
     except Exception:
         pass
-    return {}
+
+    # 2. 中国 IP 用太平洋电脑网 API 补查更准确的城市和区县
+    if result.get("country") and ("中国" in result["country"] or "China" in result["country"]):
+        try:
+            url2 = f"http://whois.pconline.com.cn/ipJson.jsp?ip={ip}&json=true"
+            req2 = urllib.request.Request(url2, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req2, timeout=3) as resp2:
+                raw = resp2.read().decode("gbk", errors="ignore")
+            data2 = json.loads(raw)
+            if data2 and not data2.get("err"):
+                pro = data2.get("pro", "")  # 省份，如"浙江省"
+                city = data2.get("city", "")  # 城市，如"杭州市"
+                region2 = data2.get("region", "")  # 区/县，如"西湖区"
+                addr = data2.get("addr", "")  # 详细地址，如"浙江省杭州市西湖区联通"
+                # pconline 的城市数据更准确，覆盖 ip-api.com 的结果
+                if city:
+                    result["city"] = city.rstrip("市") if city.endswith("市") and len(city) > 2 else city
+                if pro:
+                    result["region"] = pro.rstrip("省") if pro.endswith("省") and len(pro) > 2 else pro
+                # 区/县信息
+                if region2:
+                    result["district"] = region2
+                # 如果 addr 有 ISP 信息且 ip-api 没返回 ISP，用 addr 补充
+                if not result.get("isp") and addr:
+                    # addr 格式如 "浙江省杭州市联通"，提取运营商
+                    for sp in ("联通", "电信", "移动", "铁通", "长城", "广电"):
+                        if sp in addr:
+                            result["isp"] = f"中国{sp}"
+                            break
+        except Exception:
+            pass
+
+    return result
 
 
 def parse_browser_os(ua: str) -> dict:
@@ -1082,6 +1125,7 @@ def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)
             country=geo.get("country", "")[:64],
             region=geo.get("region", "")[:64],
             city=geo.get("city", "")[:64],
+            district=geo.get("district", "")[:64],
             isp=geo.get("isp", "")[:128],
             os=bo["os"][:64],
             browser=bo["browser"][:64],
@@ -1151,6 +1195,7 @@ def visit_myinfo(request: Request):
         "country": geo.get("country", ""),
         "region": geo.get("region", ""),
         "city": geo.get("city", ""),
+        "district": geo.get("district", ""),
         "isp": geo.get("isp", ""),
         "device": detect_device(ua),
         "os": bo["os"],
@@ -1404,6 +1449,7 @@ def admin_visitors(
                 "last_country": r.country or "",
                 "last_region": r.region or "",
                 "last_city": r.city or "",
+                "last_district": r.district or "",
                 "last_isp": r.isp or "",
                 "last_os": r.os or "",
                 "last_browser": r.browser or "",
@@ -1427,6 +1473,7 @@ def admin_visitors(
                 a["last_country"] = r.country or ""
                 a["last_region"] = r.region or ""
                 a["last_city"] = r.city or ""
+                a["last_district"] = r.district or ""
                 a["last_isp"] = r.isp or ""
                 a["last_os"] = r.os or ""
                 a["last_browser"] = r.browser or ""
@@ -1477,6 +1524,7 @@ def admin_visitor_records(
             "country": r.country or "",
             "region": r.region or "",
             "city": r.city or "",
+            "district": r.district or "",
             "isp": r.isp or "",
             "os": r.os or "",
             "browser": r.browser or "",
