@@ -223,6 +223,10 @@ export default function AdminPage() {
     "newest"
   );
   const [msgSearch, setMsgSearch] = useState("");
+  const [msgPage, setMsgPage] = useState(1);
+  const [msgPageSize] = useState(10);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
   const [groupByIp, setGroupByIp] = useState(false);
 
   useEffect(() => {
@@ -603,6 +607,77 @@ export default function AdminPage() {
     });
     return result;
   }, [items, tab, msgSort, msgSearch]);
+
+  // 留言分页
+  const msgTotalPages = Math.max(
+    1,
+    Math.ceil(sortedMessages.length / msgPageSize)
+  );
+  const pagedMessages = useMemo(() => {
+    if (tab !== "messages") return sortedMessages;
+    const start = (msgPage - 1) * msgPageSize;
+    return sortedMessages.slice(start, start + msgPageSize);
+  }, [sortedMessages, tab, msgPage, msgPageSize]);
+
+  // 搜索/排序变化时重置到第一页
+  useEffect(() => {
+    setMsgPage(1);
+    setSelectedIds(new Set());
+  }, [msgSearch, msgSort]);
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const pageIds = pagedMessages.map((m) => m.id);
+    const allSelected = pageIds.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        pageIds.forEach((id) => next.delete(id));
+      } else {
+        pageIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const batchDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`确认删除选中的 ${selectedIds.size} 条留言？（含回复和点赞）`))
+      return;
+    setBatchDeleting(true);
+    setError("");
+    try {
+      const res = await fetch(`${API}/api/admin/messages/batch-delete`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({ ids: Array.from(selectedIds) }),
+      });
+      if (res.status === 401) {
+        logout();
+        return;
+      }
+      if (!res.ok) {
+        setError("批量删除失败");
+        return;
+      }
+      const data = await res.json();
+      setOkMsg(`已删除 ${data.deleted} 条留言`);
+      setSelectedIds(new Set());
+      loadContents();
+    } catch {
+      setError("批量删除失败：检查 API");
+    } finally {
+      setBatchDeleting(false);
+    }
+  };
 
   const uploadCover = async (file: File) => {
     setUploading(true);
@@ -1862,11 +1937,44 @@ export default function AdminPage() {
                     <span className="text-xs text-gray-500">
                       {sortedMessages.length} 条
                     </span>
+                    {selectedIds.size > 0 && (
+                      <button
+                        type="button"
+                        onClick={batchDelete}
+                        disabled={batchDeleting}
+                        className="rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/20 disabled:opacity-50"
+                      >
+                        {batchDeleting
+                          ? "删除中…"
+                          : `批量删除(${selectedIds.size})`}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
               <div className="space-y-3">
-                {(tab === "messages" ? sortedMessages : items).map((item) => {
+                {tab === "messages" && sortedMessages.length > 0 && (
+                  <div className="flex items-center gap-3 border-b border-white/5 pb-2">
+                    <label className="flex cursor-pointer items-center gap-2 text-xs text-gray-400">
+                      <input
+                        type="checkbox"
+                        checked={
+                          pagedMessages.length > 0 &&
+                          pagedMessages.every((m) => selectedIds.has(m.id))
+                        }
+                        onChange={toggleSelectAll}
+                        className="h-4 w-4 cursor-pointer rounded border-white/20 bg-black/40 accent-cyan-500"
+                      />
+                      全选本页
+                    </label>
+                    {selectedIds.size > 0 && (
+                      <span className="text-xs text-cyan-300">
+                        已选 {selectedIds.size} 条
+                      </span>
+                    )}
+                  </div>
+                )}
+                {(tab === "messages" ? pagedMessages : items).map((item) => {
                   const body = item.body as {
                     reply_to?: number;
                     is_admin?: boolean;
@@ -1887,10 +1995,19 @@ export default function AdminPage() {
                       body?.is_admin
                         ? "border-purple-500/30 bg-purple-500/5"
                         : "border-white/10 bg-black/30"
-                    }`}
+                    } ${selectedIds.has(item.id) ? "ring-1 ring-cyan-400/30" : ""}`}
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 flex-1 items-start gap-3">
+                        {tab === "messages" && !body?.reply_to && (
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(item.id)}
+                            onChange={() => toggleSelect(item.id)}
+                            className="mt-1 h-4 w-4 shrink-0 cursor-pointer rounded border-white/20 bg-black/40 accent-cyan-500"
+                          />
+                        )}
+                        <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-white">
                             {item.title || "(无标题)"}
@@ -1927,6 +2044,7 @@ export default function AdminPage() {
                             replies.length > 0 &&
                             ` · 已回复 ${replies.length} 条`}
                         </div>
+                      </div>
                       </div>
                       <div className="flex shrink-0 gap-2">
                         {tab === "messages" && !body?.reply_to && (
@@ -2001,6 +2119,54 @@ export default function AdminPage() {
                   <p className="py-8 text-center text-sm text-gray-500">
                     暂无数据
                   </p>
+                )}
+                {/* 留言分页 */}
+                {tab === "messages" && msgTotalPages > 1 && (
+                  <div className="flex items-center justify-center gap-2 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => setMsgPage((p) => Math.max(1, p - 1))}
+                      disabled={msgPage === 1}
+                      className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-gray-300 disabled:opacity-30"
+                    >
+                      上一页
+                    </button>
+                    {Array.from({ length: msgTotalPages }, (_, i) => i + 1)
+                      .filter(
+                        (p) =>
+                          p === 1 ||
+                          p === msgTotalPages ||
+                          Math.abs(p - msgPage) <= 1
+                      )
+                      .map((p, idx, arr) => (
+                        <span key={p} className="flex items-center">
+                          {idx > 0 && arr[idx - 1] !== p - 1 && (
+                            <span className="px-1 text-gray-600">…</span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setMsgPage(p)}
+                            className={`h-7 w-7 rounded-lg text-xs transition ${
+                              p === msgPage
+                                ? "bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-400/40"
+                                : "text-gray-400 hover:bg-white/5"
+                            }`}
+                          >
+                            {p}
+                          </button>
+                        </span>
+                      ))}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMsgPage((p) => Math.min(msgTotalPages, p + 1))
+                      }
+                      disabled={msgPage === msgTotalPages}
+                      className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-gray-300 disabled:opacity-30"
+                    >
+                      下一页
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

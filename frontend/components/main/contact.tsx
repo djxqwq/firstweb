@@ -59,12 +59,15 @@ export const Contact = () => {
   const [likingId, setLikingId] = useState<number | null>(null);
   const [myInfo, setMyInfo] = useState<MyInfo | null>(null);
 
+  const PAGE_SIZE = 10;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
   const loadMessages = (p: number) =>
-    fetchMessages(p, 10).then((data) => {
+    fetchMessages(p, PAGE_SIZE).then((data) => {
       setTotal(data.total);
       setHasMore(data.has_more);
       setPage(p);
-      setMessages((prev) => (p === 1 ? data.items : [...prev, ...data.items]));
+      setMessages(data.items);
     });
 
   useEffect(() => {
@@ -283,14 +286,48 @@ export const Contact = () => {
               />
             ))}
 
-            {hasMore && (
-              <div className="flex justify-center pt-2">
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 pt-4">
                 <button
                   type="button"
-                  onClick={() => loadMessages(page + 1)}
-                  className="rounded-xl border border-cyan-400/40 px-6 py-2 text-sm text-cyan-200 transition hover:bg-cyan-500/10"
+                  onClick={() => loadMessages(Math.max(1, page - 1))}
+                  disabled={page === 1}
+                  className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-gray-300 transition hover:border-cyan-400/30 disabled:opacity-30"
                 >
-                  加载更多
+                  上一页
+                </button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1)
+                  .filter(
+                    (p) =>
+                      p === 1 ||
+                      p === totalPages ||
+                      Math.abs(p - page) <= 1
+                  )
+                  .map((p, idx, arr) => (
+                    <span key={p} className="flex items-center">
+                      {idx > 0 && arr[idx - 1] !== p - 1 && (
+                        <span className="px-1 text-gray-600">…</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => loadMessages(p)}
+                        className={`h-7 w-7 rounded-lg text-xs transition ${
+                          p === page
+                            ? "bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-400/40"
+                            : "text-gray-400 hover:bg-white/5"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    </span>
+                  ))}
+                <button
+                  type="button"
+                  onClick={() => loadMessages(Math.min(totalPages, page + 1))}
+                  disabled={page === totalPages}
+                  className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-gray-300 transition hover:border-cyan-400/30 disabled:opacity-30"
+                >
+                  下一页
                 </button>
               </div>
             )}

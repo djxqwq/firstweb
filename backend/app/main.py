@@ -957,12 +957,18 @@ def detect_device(ua: str) -> str:
     return "desktop"
 
 
+# ip-api.com 已知返回错误城市名的列表（这些不是真实城市名）
+_BAD_CITY_NAMES = {"南市", "Unknown", "unknown", ""}
+
+
 def lookup_ip_geo(ip: str) -> dict:
     """查询 IP 地理位置。
 
-    策略：先用 ip-api.com 查询（全球覆盖），如果是中国 IP 再用太平洋电脑网
-    API 补查更准确的城市数据（ip-api.com 对中国城市级别数据不准确，
-    如把杭州某些 IP 段标成"南市"）。
+    策略（三源融合）：
+    1. ip-api.com — 全球覆盖，中文语言，但中国城市级数据不准确（如把杭州标成"南市"）
+    2. pconline（太平洋电脑网）— 中国 IP 专用，城市级数据准确，但区县经常为空
+       注意：必须用 HTTPS，HTTP 会返回 403
+    3. ipinfo.io — 第三方补充，有时有不同精度的数据
 
     本地/内网 IP 直接返回空字典，不发起外网请求。
     """
@@ -984,10 +990,14 @@ def lookup_ip_geo(ip: str) -> dict:
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         if data.get("status") == "success":
+            city = data.get("city", "")
+            # 过滤已知的错误城市名
+            if city in _BAD_CITY_NAMES:
+                city = ""
             result = {
                 "country": data.get("country", ""),
                 "region": data.get("regionName", ""),
-                "city": data.get("city", ""),
+                "city": city,
                 "district": data.get("district", ""),
                 "isp": data.get("isp", ""),
             }
@@ -995,11 +1005,17 @@ def lookup_ip_geo(ip: str) -> dict:
         pass
 
     # 2. 中国 IP 用太平洋电脑网 API 补查更准确的城市和区县
+    #    必须用 HTTPS，HTTP 会返回 403 Forbidden
     if result.get("country") and ("中国" in result["country"] or "China" in result["country"]):
         try:
-            url2 = f"http://whois.pconline.com.cn/ipJson.jsp?ip={ip}&json=true"
-            req2 = urllib.request.Request(url2, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req2, timeout=3) as resp2:
+            url2 = f"https://whois.pconline.com.cn/ipJson.jsp?ip={ip}&json=true"
+            req2 = urllib.request.Request(
+                url2,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                },
+            )
+            with urllib.request.urlopen(req2, timeout=5) as resp2:
                 raw = resp2.read().decode("gbk", errors="ignore")
             data2 = json.loads(raw)
             if data2 and not data2.get("err"):
@@ -1009,9 +1025,17 @@ def lookup_ip_geo(ip: str) -> dict:
                 addr = data2.get("addr", "")  # 详细地址，如"浙江省杭州市西湖区联通"
                 # pconline 的城市数据更准确，覆盖 ip-api.com 的结果
                 if city:
-                    result["city"] = city.rstrip("市") if city.endswith("市") and len(city) > 2 else city
+                    result["city"] = (
+                        city.rstrip("市")
+                        if city.endswith("市") and len(city) > 2
+                        else city
+                    )
                 if pro:
-                    result["region"] = pro.rstrip("省") if pro.endswith("省") and len(pro) > 2 else pro
+                    result["region"] = (
+                        pro.rstrip("省")
+                        if pro.endswith("省") and len(pro) > 2
+                        else pro
+                    )
                 # 区/县信息
                 if region2:
                     result["district"] = region2
@@ -1021,6 +1045,80 @@ def lookup_ip_geo(ip: str) -> dict:
                     for sp in ("联通", "电信", "移动", "铁通", "长城", "广电"):
                         if sp in addr:
                             result["isp"] = f"中国{sp}"
+                            break
+        except Exception:
+            pass
+
+    # 3. ipinfo.io 补充 — 如果区县仍为空，尝试获取更精确的位置
+    if result.get("country") and not result.get("district"):
+        try:
+            url3 = f"https://ipinfo.io/{ip}/json"
+            req3 = urllib.request.Request(
+                url3, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+            )
+            with urllib.request.urlopen(req3, timeout=5) as resp3:
+                data3 = json.loads(resp3.read().decode("utf-8"))
+            if data3 and not data3.get("error"):
+                # ipinfo.io 的 region 字段有时是中文区县名
+                # 但主要返回英文，我们只取 postal code 对应的信息不可靠
+                # 如果之前没有城市数据，用 ipinfo 的 city
+                if not result.get("city") and data3.get("city"):
+                    # ipinfo 返回英文城市名，简单映射常见中国城市
+                    en_city = data3.get("city", "")
+                    _EN_CITY_MAP = {
+                        "Hangzhou": "杭州",
+                        "Beijing": "北京",
+                        "Shanghai": "上海",
+                        "Shenzhen": "深圳",
+                        "Guangzhou": "广州",
+                        "Jiaxing": "嘉兴",
+                        "Ningbo": "宁波",
+                        "Wenzhou": "温州",
+                        "Nanjing": "南京",
+                        "Suzhou": "苏州",
+                        "Chengdu": "成都",
+                        "Wuhan": "武汉",
+                        "Xian": "西安",
+                        "Chongqing": "重庆",
+                        "Tianjin": "天津",
+                        "Qingdao": "青岛",
+                        "Dalian": "大连",
+                        "Xiamen": "厦门",
+                        "Fuzhou": "福州",
+                        "Jinan": "济南",
+                        "Zhengzhou": "郑州",
+                        "Changsha": "长沙",
+                        "Hefei": "合肥",
+                        "Nanchang": "南昌",
+                        "Shenyang": "沈阳",
+                        "Harbin": "哈尔滨",
+                        "Changchun": "长春",
+                        "Kunming": "昆明",
+                        "Guiyang": "贵阳",
+                        "Lanzhou": "兰州",
+                        "Taiyuan": "太原",
+                        "Shijiazhuang": "石家庄",
+                        "Hohhot": "呼和浩特",
+                        "Urumqi": "乌鲁木齐",
+                        "Lhasa": "拉萨",
+                        "Yinchuan": "银川",
+                        "Xining": "西宁",
+                        "Haikou": "海口",
+                        "Nanning": "南宁",
+                        "Guilin": "桂林",
+                    }
+                    result["city"] = _EN_CITY_MAP.get(en_city, en_city)
+                # 补充 ISP
+                if not result.get("isp") and data3.get("org"):
+                    org = data3.get("org", "")
+                    for sp in ("China Telecom", "China Unicom", "China Mobile"):
+                        if sp in org:
+                            cn_map = {
+                                "China Telecom": "中国电信",
+                                "China Unicom": "中国联通",
+                                "China Mobile": "中国移动",
+                            }
+                            result["isp"] = cn_map[sp]
                             break
         except Exception:
             pass
@@ -1338,10 +1436,69 @@ def admin_delete_content(
     if not row:
         raise HTTPException(404, "not found")
     cover = row.cover_url or ""  # 删除内容前记录封面，提交后清理文件
+    # 如果是留言，同时删除其所有回复和点赞记录
+    if row.type == "message":
+        _delete_message_replies(db, content_id)
+        db.execute(
+            sqlalchemy_text(
+                "DELETE FROM message_likes WHERE message_id = :mid"
+            ),
+            {"mid": content_id},
+        )
     db.delete(row)
     db.commit()
     delete_upload_file(cover)
     return {"ok": True}
+
+
+def _delete_message_replies(db: Session, parent_id: int) -> None:
+    """删除指定留言的所有回复（递归删除子回复），同时清理点赞记录。"""
+    replies = db.scalars(
+        select(Content).where(
+            Content.type == "message",
+            Content.body_json.like(f'%"reply_to": {parent_id}%'),
+        )
+    ).all()
+    for rep in replies:
+        _delete_message_replies(db, rep.id)
+        db.execute(
+            sqlalchemy_text(
+                "DELETE FROM message_likes WHERE message_id = :mid"
+            ),
+            {"mid": rep.id},
+        )
+        db.delete(rep)
+
+
+class BatchDeleteIn(BaseModel):
+    ids: list[int]
+
+
+@app.post("/api/admin/messages/batch-delete")
+def admin_batch_delete_messages(
+    payload: BatchDeleteIn,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(get_current_admin),
+):
+    """批量删除留言（含关联回复和点赞记录）。"""
+    if not payload.ids:
+        return {"ok": True, "deleted": 0}
+    deleted = 0
+    for mid in payload.ids:
+        row = db.get(Content, mid)
+        if not row or row.type != "message":
+            continue
+        # 删除该留言的回复
+        _delete_message_replies(db, mid)
+        # 删除关联的点赞记录
+        db.execute(
+            sqlalchemy_text("DELETE FROM message_likes WHERE message_id = :mid"),
+            {"mid": mid},
+        )
+        db.delete(row)
+        deleted += 1
+    db.commit()
+    return {"ok": True, "deleted": deleted}
 
 
 @app.post("/api/admin/upload")
