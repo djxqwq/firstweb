@@ -746,7 +746,7 @@ def post_message(payload: MessageIn, db: Session = Depends(get_db)):
         )
     )
     db.commit()
-    return {"ok": True, "visitor_id": visitor_id}
+    return {"ok": True}
 
 
 @app.get("/api/messages")
