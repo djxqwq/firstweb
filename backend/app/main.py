@@ -116,6 +116,7 @@ class Visit(Base):
     id = Column(Integer, primary_key=True, index=True)
     ip_hash = Column(String(64), default="")
     visitor_id = Column(String(64), default="", index=True)
+    fingerprint_hash = Column(String(64), default="", index=True)
     ip = Column(String(64), default="")
     country = Column(String(64), default="")
     region = Column(String(64), default="")
@@ -230,6 +231,7 @@ class VisitIn(BaseModel):
     referrer: str = ""
     device: str = ""
     visitor_id: str = ""
+    fingerprint: str = ""
 
 
 class SettingsIn(BaseModel):
@@ -310,6 +312,9 @@ def content_to_out(row: Content) -> dict:
         "sort_order": row.sort_order or 0,
         "published": bool(row.published),
         "level": row.level or 0,
+        "created_at": row.created_at.replace(tzinfo=timezone.utc).isoformat()
+        if row.created_at
+        else None,
     }
 
 
@@ -525,6 +530,7 @@ def _migrate_visits_table(engine) -> None:
     """给 visits 表补全新增列，已存在则跳过。兼容 SQLite/TiDB/MySQL。"""
     cols = {
         "visitor_id": "VARCHAR(64) DEFAULT ''",
+        "fingerprint_hash": "VARCHAR(64) DEFAULT ''",
         "ip": "VARCHAR(64) DEFAULT ''",
         "country": "VARCHAR(64) DEFAULT ''",
         "region": "VARCHAR(64) DEFAULT ''",
@@ -560,6 +566,7 @@ def _migrate_visits_table(engine) -> None:
             idx_existing = set()
         for idx_name, col in (
             ("ix_visits_visitor_id", "visitor_id"),
+            ("ix_visits_fingerprint_hash", "fingerprint_hash"),
             ("ix_visits_deleted", "deleted"),
         ):
             if idx_name in idx_existing:
@@ -737,7 +744,7 @@ def post_message(payload: MessageIn, db: Session = Depends(get_db)):
         )
     )
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "visitor_id": visitor_id}
 
 
 @app.get("/api/messages")
@@ -1032,6 +1039,24 @@ def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)
     path = payload.path[:255]
     visitor_id = (payload.visitor_id or "").strip()[:64]
 
+    # 计算浏览器指纹哈希（不含 IP，这样换 VPN/IP 时仍能识别同一人）
+    # 指纹 = UA + 屏幕分辨率 + 色深 + 时区 + 语言 + CPU核心数
+    fp_raw = payload.fingerprint or ua
+    fingerprint_hash = hashlib.sha256(fp_raw.encode()).hexdigest()[:16]
+
+    # 指纹兜底：如果本次带了 visitor_id，但之前同 IP+指纹的访问用的是另一个 visitor_id，
+    # 说明用户的 localStorage/Cookie 被清了又重新生成，沿用旧 visitor_id 保持聚合一致
+    if visitor_id:
+        existing = db.scalar(
+            select(Visit.visitor_id).where(
+                Visit.fingerprint_hash == fingerprint_hash,
+                Visit.visitor_id != "",
+                Visit.visitor_id != visitor_id,
+            ).order_by(Visit.id.desc()).limit(1)
+        )
+        if existing:
+            visitor_id = existing  # 沿用旧 ID
+
     # 去重：同一 visitor_id（或回退到 ip_hash）+ 同路径在窗口内已记录过则跳过
     dedup_key = visitor_id or ip_hash
     threshold = datetime.now(timezone.utc) - timedelta(seconds=VISIT_DEDUP_SECONDS)
@@ -1043,7 +1068,7 @@ def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)
         ).limit(1)
     )
     if already:
-        return {"ok": True, "dedup": True}
+        return {"ok": True, "dedup": True, "visitor_id": visitor_id}
 
     # 查询地理信息 + 解析 UA，存完整访客信息
     geo = lookup_ip_geo(ip)
@@ -1052,6 +1077,7 @@ def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)
         Visit(
             ip_hash=ip_hash,
             visitor_id=visitor_id,
+            fingerprint_hash=fingerprint_hash,
             ip=ip[:64],
             country=geo.get("country", "")[:64],
             region=geo.get("region", "")[:64],
@@ -1336,9 +1362,15 @@ def admin_visits(
 
 @app.get("/api/admin/visitors")
 def admin_visitors(
-    db: Session = Depends(get_db), _: Admin = Depends(get_current_admin)
+    group_by: str = "visitor_id",
+    db: Session = Depends(get_db),
+    _: Admin = Depends(get_current_admin),
 ):
-    """按 visitor_id 聚合访客（同一人即使 IP 变了也归为一条）。
+    """聚合访客列表。
+
+    group_by=visitor_id（默认）：按浏览器 visitor_id 聚合，同一人即使 IP 变了也归为一条。
+    group_by=ip：按 IP 聚合，同一 IP 下不同浏览器/设备也合并为一条，
+                 适合「同一台电脑换了浏览器却被当成两个人」的场景。
 
     只统计未被软删除的记录；返回最新一条记录的完整访客信息。
     总访问数请看 /api/visits/stats（不受软删除影响）。
@@ -1352,14 +1384,18 @@ def admin_visitors(
     notes = {n.visitor_id: n.note for n in db.scalars(select(VisitorNote)).all()}
     agg: dict[str, dict] = {}
     for r in rows:
-        # 优先 visitor_id 聚合；旧数据无 visitor_id 时回退 ip_hash
-        key = r.visitor_id or f"hash:{r.ip_hash}" or "unknown"
+        if group_by == "ip":
+            # 按 IP 聚合：同一 IP 的所有访问合并
+            key = r.ip or f"hash:{r.ip_hash}" or "unknown"
+        else:
+            # 默认：优先 visitor_id 聚合；旧数据无 visitor_id 时回退 ip_hash
+            key = r.visitor_id or f"hash:{r.ip_hash}" or "unknown"
         a = agg.get(key)
         if a is None:
             a = {
                 "visitor_id": r.visitor_id or "",
                 "ip_hash": r.ip_hash or "",
-                "note": notes.get(key, ""),
+                "note": notes.get(key, "") or notes.get(r.visitor_id or "", ""),
                 "count": 0,
                 "first_at": r.created_at,
                 "last_at": r.created_at,
@@ -1375,9 +1411,13 @@ def admin_visitors(
                 "last_path": r.path,
                 "last_referrer": r.referrer,
                 "last_ua": r.ua,
+                # 按 IP 合并时记录子访客数
+                "sub_visitors": set(),
             }
             agg[key] = a
         a["count"] += 1
+        if group_by == "ip" and r.visitor_id:
+            a["sub_visitors"].add(r.visitor_id)
         if r.created_at:
             if a["first_at"] is None or r.created_at < a["first_at"]:
                 a["first_at"] = r.created_at
@@ -1407,6 +1447,8 @@ def admin_visitors(
             if a["last_at"]
             else None
         )
+        # set 不可 JSON 序列化，转为计数
+        a["sub_visitor_count"] = len(a.pop("sub_visitors", set()))
     return result
 
 

@@ -34,6 +34,7 @@ type ContentItem = {
   tags?: string[] | string;
   links?: Record<string, string> | string;
   body?: Record<string, unknown>;
+  created_at?: string | null;
 };
 
 type VisitItem = {
@@ -70,6 +71,7 @@ type VisitorAgg = {
   last_path: string;
   last_referrer: string;
   last_ua: string;
+  sub_visitor_count?: number;
 };
 
 type VisitStats = {
@@ -215,6 +217,11 @@ export default function AdminPage() {
   const [projectOptions, setProjectOptions] = useState<
     { id: number; title: string }[]
   >([]);
+  const [msgSort, setMsgSort] = useState<"newest" | "oldest" | "unreplied">(
+    "newest"
+  );
+  const [msgSearch, setMsgSearch] = useState("");
+  const [groupByIp, setGroupByIp] = useState(false);
 
   useEffect(() => {
     setToken(localStorage.getItem("admin_token") || "");
@@ -274,9 +281,12 @@ export default function AdminPage() {
   const loadVisits = useCallback(async () => {
     if (!token) return;
     const [vRes, sRes] = await Promise.all([
-      fetch(`${API}/api/admin/visitors`, {
-        headers: authHeaders(token),
-      }),
+      fetch(
+        `${API}/api/admin/visitors${groupByIp ? "?group_by=ip" : ""}`,
+        {
+          headers: authHeaders(token),
+        }
+      ),
       fetch(`${API}/api/visits/stats`),
     ]);
     if (vRes.status === 401) {
@@ -285,7 +295,7 @@ export default function AdminPage() {
     }
     if (vRes.ok) setVisitors(await vRes.json());
     if (sRes.ok) setStats(await sRes.json());
-  }, [token, logout]);
+  }, [token, logout, groupByIp]);
 
   const loadVisitorRecords = useCallback(
     async (key: string) => {
@@ -540,6 +550,56 @@ export default function AdminPage() {
       );
     });
   }, [visitors, visitQ, visitDevice]);
+
+  // 留言排序与过滤
+  const sortedMessages = useMemo(() => {
+    if (tab !== "messages") return items;
+    // 找出所有已回复的主留言 id
+    const repliedIds = new Set(
+      items
+        .filter((item) => {
+          const body = item.body as { reply_to?: number } | undefined;
+          return body?.reply_to;
+        })
+        .map((item) => (item.body as { reply_to?: number }).reply_to!)
+    );
+    let result = items.filter((item) => {
+      const body = item.body as { reply_to?: number; is_admin?: boolean } | undefined;
+      // 只显示主留言（非回复），回复在展开时查看
+      if (body?.reply_to) return false;
+      // 搜索过滤
+      if (msgSearch.trim()) {
+        const q = msgSearch.toLowerCase();
+        if (
+          !(item.title || "").toLowerCase().includes(q) &&
+          !(item.summary || "").toLowerCase().includes(q)
+        )
+          return false;
+      }
+      return true;
+    });
+    // 排序
+    result = [...result].sort((a, b) => {
+      if (msgSort === "newest") {
+        const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return tb - ta;
+      }
+      if (msgSort === "oldest") {
+        const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return ta - tb;
+      }
+      // unreplied: 未回复的排前面，然后按时间倒序
+      const aReplied = repliedIds.has(a.id);
+      const bReplied = repliedIds.has(b.id);
+      if (aReplied !== bReplied) return aReplied ? 1 : -1;
+      const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return tb - ta;
+    });
+    return result;
+  }, [items, tab, msgSort, msgSearch]);
 
   const uploadCover = async (file: File) => {
     setUploading(true);
@@ -918,31 +978,65 @@ export default function AdminPage() {
                   导出 CSV
                 </button>
               </div>
-              <div className="flex h-20 items-end gap-2">
-                {(stats?.days || []).map((d) => {
-                  const max = Math.max(
-                    1,
-                    ...(stats?.days || []).map((x) => x.count)
-                  );
-                  return (
-                    <div
-                      key={d.day}
-                      className="flex flex-1 flex-col items-center gap-1"
-                      title={`${d.day}: ${d.count}`}
-                    >
+              {(() => {
+                // 补全最近 7 天，没有数据的日期填 0
+                const rawDays = stats?.days || [];
+                const dayMap = new Map(rawDays.map((d) => [d.day, d.count]));
+                const padded: { day: string; count: number }[] = [];
+                const now = new Date();
+                for (let i = 6; i >= 0; i--) {
+                  const dt = new Date(now);
+                  dt.setDate(dt.getDate() - i);
+                  const key = dt.toISOString().slice(0, 10);
+                  padded.push({ day: key, count: dayMap.get(key) ?? 0 });
+                }
+                const max = Math.max(1, ...padded.map((x) => x.count));
+                const total7 = padded.reduce((s, x) => s + x.count, 0);
+                return (
+                  <div className="flex items-end gap-2" style={{ height: 140 }}>
+                    {padded.map((d, i) => (
                       <div
-                        className="w-full rounded-t bg-gradient-to-t from-violet-600 to-cyan-400"
-                        style={{
-                          height: `${(d.count / max) * 100}%`,
-                          minHeight: 4,
-                        }}
-                      />
-                      <span className="text-[9px] text-gray-500">
-                        {String(d.day).slice(5)}
-                      </span>
-                    </div>
-                  );
-                })}
+                        key={d.day}
+                        className="flex flex-1 flex-col items-center justify-end gap-1.5"
+                        style={{ height: "100%" }}
+                      >
+                        <span className="text-[10px] font-medium text-cyan-200/80">
+                          {d.count > 0 ? d.count : ""}
+                        </span>
+                        <div
+                          className="w-full rounded-t bg-gradient-to-t from-violet-600 to-cyan-400 transition-all duration-300"
+                          style={{
+                            height: `${Math.max(d.count > 0 ? 6 : 2, (d.count / max) * 80)}%`,
+                            opacity: d.count > 0 ? 1 : 0.2,
+                          }}
+                          title={`${d.day}: ${d.count} 次访问`}
+                        />
+                        <span className="text-[9px] text-gray-500">
+                          {d.day.slice(5)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+              {(stats?.days || []).length === 0 && (
+                <p className="py-4 text-center text-xs text-gray-600">
+                  暂无访问数据
+                </p>
+              )}
+              <div className="mt-2 text-right text-[10px] text-gray-600">
+                近 7 日合计 {(() => {
+                  const rawDays = stats?.days || [];
+                  const dayMap = new Map(rawDays.map((d) => [d.day, d.count]));
+                  let total = 0;
+                  const now = new Date();
+                  for (let i = 6; i >= 0; i--) {
+                    const dt = new Date(now);
+                    dt.setDate(dt.getDate() - i);
+                    total += dayMap.get(dt.toISOString().slice(0, 10)) ?? 0;
+                  }
+                  return total;
+                })()} 次访问
               </div>
             </div>
 
@@ -962,8 +1056,20 @@ export default function AdminPage() {
                 <option value="desktop">desktop</option>
                 <option value="mobile">mobile</option>
               </select>
+              <label className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-xs text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={groupByIp}
+                  onChange={(e) => setGroupByIp(e.target.checked)}
+                  className="accent-cyan-400"
+                />
+                按 IP 合并
+              </label>
               <span className="self-center text-xs text-gray-500">
                 {filteredVisitors.length} / {visitors.length} 位访客
+                {groupByIp && (
+                  <span className="ml-1 text-cyan-400/60">（IP 模式）</span>
+                )}
               </span>
               <button
                 type="button"
@@ -1074,6 +1180,11 @@ export default function AdminPage() {
                             <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-violet-200">
                               {v.count} 次
                             </span>
+                            {groupByIp && (v.sub_visitor_count ?? 0) > 1 && (
+                              <span className="ml-1 text-[10px] text-cyan-400/60">
+                                ({v.sub_visitor_count} 个浏览器)
+                              </span>
+                            )}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-400">
                             {v.last_at
@@ -1721,33 +1832,98 @@ export default function AdminPage() {
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-[#0a0618] p-5">
-              <h2 className="mb-4 text-lg text-white">列表</h2>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-lg text-white">列表</h2>
+                {tab === "messages" && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      className="min-w-[140px] flex-1 rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-sm outline-none focus:border-cyan-400/40"
+                      placeholder="搜索留言…"
+                      value={msgSearch}
+                      onChange={(e) => setMsgSearch(e.target.value)}
+                    />
+                    <select
+                      className="rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-sm outline-none"
+                      value={msgSort}
+                      onChange={(e) =>
+                        setMsgSort(e.target.value as "newest" | "oldest" | "unreplied")
+                      }
+                    >
+                      <option value="newest">最新优先</option>
+                      <option value="oldest">最早优先</option>
+                      <option value="unreplied">未回复优先</option>
+                    </select>
+                    <span className="text-xs text-gray-500">
+                      {sortedMessages.length} 条
+                    </span>
+                  </div>
+                )}
+              </div>
               <div className="space-y-3">
-                {items.map((item) => (
+                {(tab === "messages" ? sortedMessages : items).map((item) => {
+                  const body = item.body as {
+                    reply_to?: number;
+                    is_admin?: boolean;
+                  } | undefined;
+                  // 留言 tab 下找出该主留言的回复
+                  const replies =
+                    tab === "messages" && !body?.reply_to
+                      ? items.filter(
+                          (i) =>
+                            (i.body as { reply_to?: number } | undefined)
+                              ?.reply_to === item.id
+                        )
+                      : [];
+                  return (
                   <div
                     key={item.id}
-                    className="rounded-xl border border-white/10 bg-black/30 p-4"
+                    className={`rounded-xl border p-4 ${
+                      body?.is_admin
+                        ? "border-purple-500/30 bg-purple-500/5"
+                        : "border-white/10 bg-black/30"
+                    }`}
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-medium text-white">
-                          {item.title || "(无标题)"}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-white">
+                            {item.title || "(无标题)"}
+                          </span>
+                          {body?.is_admin && (
+                            <span className="rounded bg-purple-500/20 px-1.5 py-0.5 text-[10px] text-purple-300">
+                              博主
+                            </span>
+                          )}
+                          {tab === "messages" && item.created_at && (
+                            <span className="text-[10px] text-gray-600">
+                              {new Date(item.created_at).toLocaleString("zh-CN")}
+                            </span>
+                          )}
                         </div>
                         <p className="mt-1 line-clamp-2 text-sm text-gray-400">
                           {item.summary}
                         </p>
                         <div className="mt-2 text-[11px] text-gray-500">
-                          #{item.id} · sort {item.sort_order} ·{" "}
-                          {item.published ? "已发布" : "草稿"}
+                          #{item.id}
+                          {tab !== "messages" && (
+                            <>
+                              {" "}· sort {item.sort_order} ·{" "}
+                              {item.published ? "已发布" : "草稿"}
+                            </>
+                          )}
                           {item.type === "skill" &&
                           typeof item.level === "number" &&
                           item.level > 0
                             ? ` · 熟练度 ${item.level}%`
                             : ""}
+                          {tab === "messages" &&
+                            !body?.reply_to &&
+                            replies.length > 0 &&
+                            ` · 已回复 ${replies.length} 条`}
                         </div>
                       </div>
                       <div className="flex shrink-0 gap-2">
-                        {tab === "messages" && (
+                        {tab === "messages" && !body?.reply_to && (
                           <button
                             type="button"
                             onClick={() => {
@@ -1777,6 +1953,22 @@ export default function AdminPage() {
                         </button>
                       </div>
                     </div>
+                    {/* 显示已有回复 */}
+                    {tab === "messages" && replies.length > 0 && (
+                      <div className="mt-3 space-y-2 border-l-2 border-purple-500/30 pl-3">
+                        {replies.map((rep) => (
+                          <div key={rep.id} className="text-sm">
+                            <span className="text-purple-300">博主回复：</span>
+                            <span className="text-gray-300">{rep.summary}</span>
+                            {rep.created_at && (
+                              <span className="ml-2 text-[10px] text-gray-600">
+                                {new Date(rep.created_at).toLocaleString("zh-CN")}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {tab === "messages" && replyingTo === item.id && (
                       <div className="mt-3 flex gap-2">
                         <input
@@ -1795,8 +1987,11 @@ export default function AdminPage() {
                       </div>
                     )}
                   </div>
-                ))}
-                {!items.length && (
+                  );
+                })}
+                {(tab === "messages"
+                  ? sortedMessages.length === 0
+                  : items.length === 0) && (
                   <p className="py-8 text-center text-sm text-gray-500">
                     暂无数据
                   </p>

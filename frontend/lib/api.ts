@@ -116,25 +116,65 @@ export function resolveMediaUrl(path: string) {
 }
 
 /**
- * 获取（必要时生成）浏览器本地永久访客 ID。
- * 存在 localStorage，只要用户不清缓存/不换浏览器/不换设备就永久不变。
- * 即使 IP 变了，后端也能据此把同一个人聚合到一起。
+ * 获取（必要时生成）浏览器本地访客 ID。
+ *
+ * 持久化策略：localStorage + Cookie 双写互备。
+ * - localStorage 读取快，但浏览器可能在 7 天后自动回收（Safari ITP / Chrome 存储压力）
+ * - Cookie 设 400 天过期，比 localStorage 更持久，作为备份恢复渠道
+ * - 两者都清空时（换浏览器/无痕模式），后端按 IP+UA 指纹兜底聚合
  */
+const VISITOR_KEY = "visitor_id_v1";
+const VISITOR_COOKIE = "vid_v1";
+
+function getCookie(name: string): string {
+  try {
+    const m = document.cookie.match(
+      new RegExp("(?:^|; )" + name.replace(/[.$?*|{}()[\]\\/+^]/g, "\\$&") + "=([^;]*)")
+    );
+    return m ? decodeURIComponent(m[1]) : "";
+  } catch {
+    return "";
+  }
+}
+
+function setCookie(name: string, value: string, days: number): void {
+  try {
+    const expires = new Date(Date.now() + days * 864e5).toUTCString();
+    document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires};path=/;SameSite=Lax`;
+  } catch {
+    /* ignore */
+  }
+}
+
+function generateUUID(): string {
+  return (
+    (crypto as Crypto & { randomUUID?: () => string }).randomUUID?.() ??
+    "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0;
+      const v = c === "x" ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    })
+  );
+}
+
 export function getVisitorId(): string {
   if (typeof window === "undefined") return "";
   try {
-    const KEY = "visitor_id_v1";
-    let id = localStorage.getItem(KEY);
+    // 1. 优先从 localStorage 读
+    let id = localStorage.getItem(VISITOR_KEY);
+    // 2. localStorage 没有则从 Cookie 恢复（localStorage 被浏览器回收但 Cookie 还在）
     if (!id) {
-      // 生成 UUID v4
-      id =
-        (crypto as Crypto & { randomUUID?: () => string }).randomUUID?.() ??
-        "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-          const r = (Math.random() * 16) | 0;
-          const v = c === "x" ? r : (r & 0x3) | 0x8;
-          return v.toString(16);
-        });
-      localStorage.setItem(KEY, id);
+      id = getCookie(VISITOR_COOKIE);
+      if (id) {
+        // 恢复到 localStorage
+        localStorage.setItem(VISITOR_KEY, id);
+      }
+    }
+    // 3. 都没有才生成新 ID，双写到 localStorage + Cookie
+    if (!id) {
+      id = generateUUID();
+      localStorage.setItem(VISITOR_KEY, id);
+      setCookie(VISITOR_COOKIE, id, 400);
     }
     return id;
   } catch {
@@ -142,8 +182,31 @@ export function getVisitorId(): string {
   }
 }
 
+/**
+ * 生成轻量浏览器指纹（UA + 屏幕 + 时区 + 语言）。
+ * 不做强唯一标识，仅作为后端兜底：当 visitor_id 丢失时，
+ * 后端可用 IP + 此指纹辅助判断是否同一人。
+ */
+export function getFingerprint(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const parts = [
+      navigator.userAgent,
+      String(screen.width || 0) + "x" + String(screen.height || 0),
+      String(screen.colorDepth || 0),
+      Intl.DateTimeFormat().resolvedOptions().timeZone || "",
+      navigator.language || "",
+      String(navigator.hardwareConcurrency || 0),
+    ];
+    return parts.join("|");
+  } catch {
+    return "";
+  }
+}
+
 export function trackVisit(path = "/") {
   if (typeof window === "undefined") return;
+  const currentId = getVisitorId();
   fetch(`${API_BASE}/api/visits`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -153,9 +216,24 @@ export function trackVisit(path = "/") {
       device: /Mobile|Android|iPhone/i.test(navigator.userAgent)
         ? "mobile"
         : "desktop",
-      visitor_id: getVisitorId(),
+      visitor_id: currentId,
+      fingerprint: getFingerprint(),
     }),
-  }).catch(() => {});
+  })
+    .then((res) => res.json())
+    .then((data: { visitor_id?: string }) => {
+      // 后端指纹兜底可能返回与本地不同的 visitor_id（localStorage 被清的场景）
+      // 同步到本地，下次访问就直接用正确的 ID
+      if (data.visitor_id && data.visitor_id !== currentId) {
+        try {
+          localStorage.setItem(VISITOR_KEY, data.visitor_id);
+          setCookie(VISITOR_COOKIE, data.visitor_id, 400);
+        } catch {
+          /* ignore */
+        }
+      }
+    })
+    .catch(() => {});
 }
 
 export async function sendMessage(name: string, content: string) {
