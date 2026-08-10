@@ -760,15 +760,33 @@ export default function AdminPage() {
       }
       const data = await res.json();
       const title = (file.name || "未命名").replace(/\.[^.]+$/, "");
-      setMusicTracks((prev) => [
-        ...prev,
-        {
-          id: `up-${Date.now()}`,
-          title,
-          url: data.url,
-        },
-      ]);
-      setOkMsg(`已加入歌单：${title}`);
+      const newTrack = {
+        id: `up-${Date.now()}`,
+        title,
+        url: data.url,
+      };
+      const updatedTracks = [...musicTracks.filter((t) => t.url), newTrack];
+      setMusicTracks(updatedTracks);
+      setOkMsg(`已加入歌单：${title}，正在自动保存…`);
+      // 自动保存到后端，避免刷新丢失
+      const saveRes = await fetch(`${API}/api/admin/settings`, {
+        method: "PUT",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          site_title: siteTitle,
+          effects: { fluid: true, snake: true, eggs: true },
+          music: {
+            enabled: musicEnabled,
+            volume: musicVolume,
+            tracks: updatedTracks,
+          },
+        }),
+      });
+      if (saveRes.ok) {
+        setOkMsg(`已加入歌单：${title}，设置已自动保存`);
+      } else {
+        setError("音乐已上传但自动保存失败，请手动点击保存设置");
+      }
     } catch {
       setError("上传失败：检查 API");
     } finally {
@@ -1167,7 +1185,7 @@ export default function AdminPage() {
                     <th className="px-4 py-3">次数</th>
                     <th className="px-4 py-3">最后访问</th>
                     <th className="px-4 py-3">设备</th>
-                    <th className="px-4 py-3">最后路径</th>
+                    <th className="px-4 py-3">运营商</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1287,8 +1305,8 @@ export default function AdminPage() {
                               {v.last_device || "—"}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-xs">
-                            {parsePath(v.last_path)}
+                          <td className="px-4 py-3 text-xs text-gray-400">
+                            {v.last_isp || "—"}
                           </td>
                         </tr>
                         {isOpen && (
@@ -1392,9 +1410,9 @@ export default function AdminPage() {
                                       <tr>
                                         <th className="px-3 py-2">时间</th>
                                         <th className="px-3 py-2">IP / 地区</th>
-                                        <th className="px-3 py-2">路径</th>
-                                        <th className="px-3 py-2">来源</th>
+                                        <th className="px-3 py-2">运营商</th>
                                         <th className="px-3 py-2">设备/系统/浏览器</th>
+                                        <th className="px-3 py-2">UA</th>
                                         <th className="px-3 py-2 text-right">操作</th>
                                       </tr>
                                     </thead>
@@ -1434,11 +1452,8 @@ export default function AdminPage() {
                                               </span>
                                             </div>
                                           </td>
-                                          <td className="px-3 py-1.5">
-                                            {parsePath(r.path)}
-                                          </td>
-                                          <td className="px-3 py-1.5">
-                                            {parseReferrer(r.referrer)}
+                                          <td className="px-3 py-1.5 text-gray-400">
+                                            {r.isp || "—"}
                                           </td>
                                           <td className="px-3 py-1.5">
                                             <div className="flex flex-col gap-0.5">
@@ -1448,6 +1463,11 @@ export default function AdminPage() {
                                                 {r.browser || "—"}
                                               </span>
                                             </div>
+                                          </td>
+                                          <td className="max-w-[200px] px-3 py-1.5">
+                                            <span className="block truncate text-[10px] text-gray-500" title={r.ua || ""}>
+                                              {r.ua || "—"}
+                                            </span>
                                           </td>
                                           <td className="whitespace-nowrap px-3 py-1.5 text-right">
                                             <button
@@ -2080,9 +2100,13 @@ export default function AdminPage() {
                     {/* 显示已有回复 */}
                     {tab === "messages" && replies.length > 0 && (
                       <div className="mt-3 space-y-2 border-l-2 border-purple-500/30 pl-3">
-                        {replies.map((rep) => (
+                        {replies.map((rep) => {
+                          const repBody = rep.body as { is_admin?: boolean } | undefined;
+                          return (
                           <div key={rep.id} className="text-sm">
-                            <span className="text-purple-300">博主回复：</span>
+                            <span className={repBody?.is_admin ? "text-purple-300" : "text-cyan-300"}>
+                              {repBody?.is_admin ? "博主" : rep.title || "访客"}：
+                            </span>
                             <span className="text-gray-300">{rep.summary}</span>
                             {rep.created_at && (
                               <span className="ml-2 text-[10px] text-gray-600">
@@ -2090,7 +2114,8 @@ export default function AdminPage() {
                               </span>
                             )}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                     {tab === "messages" && replyingTo === item.id && (
