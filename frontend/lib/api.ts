@@ -92,6 +92,7 @@ export type PublicMusicTrack = {
   title?: string;
   url?: string;
   src?: string;
+  cover?: string;
 };
 
 export type PublicSettings = {
