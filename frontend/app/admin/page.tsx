@@ -1349,28 +1349,40 @@ export default function AdminPage() {
           <div className="flex flex-wrap gap-2">
             {(
               [
-                ["contents", "内容", null],
-                ["visits", "访客", stats?.today_unique ?? stats?.today ?? null],
-                ["messages", "留言", msgBadge || null],
-                ["logins", "登录", null],
-                ["settings", "设置", null],
-              ] as const
-            ).map(([k, label, badge], idx) => (
+                { key: "contents" as const, label: "内容", badge: null as number | null },
+                {
+                  key: "visits" as const,
+                  label: "访客",
+                  badge: (stats?.today_unique ?? stats?.today ?? null) as
+                    | number
+                    | null,
+                },
+                {
+                  key: "messages" as const,
+                  label: "留言",
+                  badge: msgBadge > 0 ? msgBadge : null,
+                },
+                { key: "logins" as const, label: "登录", badge: null },
+                { key: "settings" as const, label: "设置", badge: null },
+              ]
+            ).map((item, idx) => (
               <button
-                key={k}
+                key={item.key}
                 type="button"
-                onClick={() => setTab(k)}
+                onClick={() => setTab(item.key)}
                 title={`快捷键 ${idx + 1}`}
                 className={`admin-tab ${
-                  tab === k ? "admin-tab-active" : "admin-tab-idle"
+                  tab === item.key ? "admin-tab-active" : "admin-tab-idle"
                 }`}
               >
                 <span className="mr-1 hidden text-[10px] opacity-40 sm:inline">
                   {idx + 1}
                 </span>
-                {label}
-                {typeof badge === "number" && badge > 0 && (
-                  <span className="admin-badge">{badge > 99 ? "99+" : badge}</span>
+                {item.label}
+                {typeof item.badge === "number" && item.badge > 0 && (
+                  <span className="admin-badge">
+                    {item.badge > 99 ? "99+" : item.badge}
+                  </span>
                 )}
               </button>
             ))}

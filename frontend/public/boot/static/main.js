@@ -12,6 +12,8 @@
     decodeDuration: 800,
     fadeOutDuration: 450,
     cursorStyle: "glow",
+    /** 数据未就绪时进度上限，等父页面通知后再冲到 100% */
+    holdPercent: 92,
   };
 
   const MESSAGES = [
@@ -78,6 +80,7 @@
       this.currentMessageIndex = 0;
       this.isComplete = false;
       this.isSkipped = false;
+      this.dataReady = false;
       this.startTime = null;
       this.timers = {};
       this.boundHandlers = {};
@@ -89,9 +92,47 @@
       if (!this.validateElements()) return this;
       this.setCursorStyle(this.config.cursorStyle);
       this.bindEvents();
+      this.bindParentMessages();
       this.callbacks.trigger("onStart", { timestamp: Date.now() });
+      this.notifyParentReady();
       this.startLoading();
       return this;
+    }
+
+    notifyParentReady() {
+      try {
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage({ type: "boot-ready" }, "*");
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    }
+
+    bindParentMessages() {
+      const onMessage = (e) => {
+        if (!e.data || typeof e.data !== "object") return;
+        if (e.data.type === "boot-data-ready") {
+          this.dataReady = true;
+          // 已顶到 hold 时继续走完
+          if (this.progress >= this.config.holdPercent - 0.5 && !this.isComplete) {
+            this.updateProgress();
+          }
+        }
+        if (e.data.type === "boot-fast") {
+          // 同会话再访：快速推到 hold，等数据后收尾
+          this.dataReady = this.dataReady || false;
+          this.setProgress(Math.max(this.progress, this.config.holdPercent - 2));
+          if (this.dataReady) {
+            this.setProgress(100);
+            this.finish(true);
+          }
+        }
+      };
+      window.addEventListener("message", onMessage);
+      this.eventCleanups.push(() =>
+        window.removeEventListener("message", onMessage)
+      );
     }
 
     getElements() {
@@ -169,12 +210,13 @@
         }
       }, this.config.skipDelay);
 
+      // 仅作安全超时；真正结束需数据就绪（或用户 SKIP）
       this.timers.timeout = setTimeout(() => {
-        if (!this.isComplete) {
+        if (!this.isComplete && this.dataReady) {
           this.setProgress(100);
           this.finish(true);
         }
-      }, this.config.duration);
+      }, this.config.duration + 8000);
 
       this.updateProgress();
     }
@@ -182,9 +224,19 @@
     updateProgress() {
       if (this.isComplete) return;
       const elapsed = Date.now() - this.startTime;
-      const targetProgress = Math.min((elapsed / this.config.duration) * 100, 100);
+      let targetProgress = Math.min(
+        (elapsed / this.config.duration) * 100,
+        100
+      );
+      // 数据未好：进度卡在 holdPercent，动画与进度条保持可见
+      if (!this.dataReady) {
+        targetProgress = Math.min(targetProgress, this.config.holdPercent);
+      }
       if (targetProgress > this.progress) {
-        this.progress = Math.min(this.progress + 1.4, targetProgress);
+        const step = this.dataReady && this.progress >= this.config.holdPercent
+          ? 3.2
+          : 1.4;
+        this.progress = Math.min(this.progress + step, targetProgress);
       }
       const currentPercent = Math.floor(this.progress);
       this.updateUI(currentPercent);
@@ -193,9 +245,20 @@
         progress: currentPercent,
         rawProgress: this.progress,
       });
-      if (this.progress >= 100) {
+      if (this.progress >= 100 && this.dataReady) {
         this.finish();
       } else {
+        // 卡在 hold：提示仍在拉数据，进度条停在当前值
+        if (
+          !this.dataReady &&
+          this.progress >= this.config.holdPercent - 0.5 &&
+          this.elements.typingText
+        ) {
+          this.elements.typingText.textContent = "SYNCING PORTFOLIO DATA...";
+          if (this.elements.statusText) {
+            this.elements.statusText.textContent = "SYNCING";
+          }
+        }
         this.timers.main = setTimeout(
           () => this.updateProgress(),
           this.config.updateInterval
@@ -291,6 +354,7 @@
       if (event) event.preventDefault();
       if (this.isComplete) return;
       this.isSkipped = true;
+      this.dataReady = true;
       this.setProgress(100);
       this.callbacks.trigger("onSkip", { progress: this.progress });
       this.finish(false);

@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
- * SystemBreach Preloader — real gate: animation + API data must both finish.
+ * SystemBreach Preloader — 始终播放开场动画；进度条在数据就绪后再走完。
  * Instant opaque cover via #site-boot-gate in root layout (no static flash).
  * https://github.com/ItsWanheda/SystemBreach-Preloader
  */
@@ -15,30 +15,47 @@ type Props = {
 
 export function BootPreloader({ onDone, dataReady = false }: Props) {
   const [animDone, setAnimDone] = useState(false);
-  const [showIframe, setShowIframe] = useState(true);
   const [finished, setFinished] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const revisitRef = useRef(false);
+  const dataReadyRef = useRef(dataReady);
+  dataReadyRef.current = dataReady;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-
-    // Same-session revisit: keep opaque gate until dataReady, skip long anim
-    const already = sessionStorage.getItem("boot_done") === "1";
-    if (already) {
-      setShowIframe(false);
-      setAnimDone(true);
-      return;
+    try {
+      revisitRef.current = sessionStorage.getItem("boot_done") === "1";
+    } catch {
+      revisitRef.current = false;
     }
+
+    const postToBoot = (msg: object) => {
+      iframeRef.current?.contentWindow?.postMessage(msg, "*");
+    };
 
     const onMessage = (e: MessageEvent) => {
       if (e.data?.type === "boot-done") setAnimDone(true);
+      if (e.data?.type === "boot-ready") {
+        if (revisitRef.current) postToBoot({ type: "boot-fast" });
+        if (dataReadyRef.current) postToBoot({ type: "boot-data-ready" });
+      }
     };
-    const failSafe = window.setTimeout(() => setAnimDone(true), 12000);
+    const failSafe = window.setTimeout(() => setAnimDone(true), 14000);
     window.addEventListener("message", onMessage);
     return () => {
       window.removeEventListener("message", onMessage);
       window.clearTimeout(failSafe);
     };
   }, []);
+
+  // 数据就绪后通知 iframe，让进度条冲到 100%
+  useEffect(() => {
+    if (!dataReady) return;
+    iframeRef.current?.contentWindow?.postMessage(
+      { type: "boot-data-ready" },
+      "*"
+    );
+  }, [dataReady]);
 
   useEffect(() => {
     if (finished) return;
@@ -50,12 +67,12 @@ export function BootPreloader({ onDone, dataReady = false }: Props) {
       } catch {
         /* ignore */
       }
-      // Remove HTML-first gate
       document.documentElement.classList.remove("booting");
-      document.getElementById("site-boot-gate")?.remove();
+      const gate = document.getElementById("site-boot-gate");
+      if (gate) gate.setAttribute("data-done", "1");
       setFinished(true);
       onDone?.();
-    }, 180);
+    }, 120);
     return () => window.clearTimeout(t);
   }, [animDone, dataReady, finished, onDone]);
 
@@ -63,19 +80,13 @@ export function BootPreloader({ onDone, dataReady = false }: Props) {
 
   return (
     <div className="fixed inset-0 z-[9999] bg-[#030014]">
-      {showIframe ? (
-        <iframe
-          title="System boot"
-          src="/boot/index.html"
-          className="h-full w-full border-0"
-          allow="autoplay"
-        />
-      ) : (
-        <div className="flex h-full w-full flex-col items-center justify-center gap-3 text-cyan-200/70">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-cyan-400/30 border-t-cyan-300" />
-          <p className="font-mono text-xs tracking-widest">LOADING DATA…</p>
-        </div>
-      )}
+      <iframe
+        ref={iframeRef}
+        title="System boot"
+        src="/boot/index.html"
+        className="h-full w-full border-0"
+        allow="autoplay"
+      />
     </div>
   );
 }
