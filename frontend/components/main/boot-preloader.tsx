@@ -16,10 +16,13 @@ type Props = {
 export function BootPreloader({ onDone, dataReady = false }: Props) {
   const [animDone, setAnimDone] = useState(false);
   const [finished, setFinished] = useState(false);
+  const [forceReady, setForceReady] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const revisitRef = useRef(false);
   const dataReadyRef = useRef(dataReady);
-  dataReadyRef.current = dataReady;
+  dataReadyRef.current = dataReady || forceReady;
+
+  const ready = dataReady || forceReady;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -40,7 +43,11 @@ export function BootPreloader({ onDone, dataReady = false }: Props) {
         if (dataReadyRef.current) postToBoot({ type: "boot-data-ready" });
       }
     };
-    const failSafe = window.setTimeout(() => setAnimDone(true), 14000);
+    const failSafe = window.setTimeout(() => {
+      setAnimDone(true);
+      setForceReady(true);
+      postToBoot({ type: "boot-data-ready" });
+    }, 10000);
     window.addEventListener("message", onMessage);
     return () => {
       window.removeEventListener("message", onMessage);
@@ -50,16 +57,16 @@ export function BootPreloader({ onDone, dataReady = false }: Props) {
 
   // 数据就绪后通知 iframe，让进度条冲到 100%
   useEffect(() => {
-    if (!dataReady) return;
+    if (!ready) return;
     iframeRef.current?.contentWindow?.postMessage(
       { type: "boot-data-ready" },
       "*"
     );
-  }, [dataReady]);
+  }, [ready]);
 
   useEffect(() => {
     if (finished) return;
-    if (!animDone || !dataReady) return;
+    if (!animDone || !ready) return;
 
     const t = window.setTimeout(() => {
       try {
@@ -74,7 +81,7 @@ export function BootPreloader({ onDone, dataReady = false }: Props) {
       onDone?.();
     }, 120);
     return () => window.clearTimeout(t);
-  }, [animDone, dataReady, finished, onDone]);
+  }, [animDone, ready, finished, onDone]);
 
   if (finished) return null;
 

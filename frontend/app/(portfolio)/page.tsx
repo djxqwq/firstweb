@@ -27,9 +27,13 @@ export default function Home() {
   const [dataReady, setDataReady] = useState(false);
   const [entered, setEntered] = useState(false);
 
-  // 预加载所有关键 API 数据，完成后才允许关闭预加载遮罩
+  // 预加载关键 API；单请求超时后仍放行，避免开场卡死
   useEffect(() => {
     let cancelled = false;
+    const cap = window.setTimeout(() => {
+      if (!cancelled) setDataReady(true);
+    }, 7000);
+
     Promise.all([
       fetchProfile(),
       fetchPublicSettings(),
@@ -44,9 +48,12 @@ export default function Home() {
       })
       .catch(() => {
         if (!cancelled) setDataReady(true);
-      });
+      })
+      .finally(() => window.clearTimeout(cap));
+
     return () => {
       cancelled = true;
+      window.clearTimeout(cap);
     };
   }, []);
 

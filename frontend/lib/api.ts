@@ -28,10 +28,11 @@ export type ApiItem = {
   published?: boolean;
 };
 
-async function getJson<T>(path: string): Promise<T | null> {
+async function getJson<T>(path: string, timeoutMs = 8000): Promise<T | null> {
   try {
     const res = await fetch(`${API_BASE}${path}`, {
       cache: "no-store",
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return null;
     return (await res.json()) as T;

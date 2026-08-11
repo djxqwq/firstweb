@@ -647,6 +647,22 @@ export default function AdminPage() {
     else loadContents();
   }, [token, tab, type, loadContents, loadVisits, loadSettings, loadLoginRecords]);
 
+  // 切类型后旧列表会短暂残留；若当前编辑 id 不在新列表里，清掉避免误 PUT
+  useEffect(() => {
+    if (tab !== "contents" || form.id == null) return;
+    if (items.length === 0) {
+      // 实习等空列表：保持新建态
+      if (type !== "profile") {
+        setForm((f) => (f.id != null ? { ...f, id: null } : f));
+      }
+      return;
+    }
+    if (!items.some((it) => it.id === form.id)) {
+      setForm((f) => ({ ...f, id: null }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, type, tab]);
+
   // profile 类型：自动加载已有个人信息进编辑模式（避免新增多条）
   useEffect(() => {
     if (
@@ -1181,24 +1197,55 @@ export default function AdminPage() {
       tags_json: tags,
       links_json: links,
     };
-    const url = form.id
-      ? `${API}/api/admin/contents/${form.id}`
+    // 列表里已没有该 id（切类型后残留编辑态）→ 当作新建，避免 PUT 404
+    const editingId =
+      form.id && items.some((it) => it.id === form.id) ? form.id : null;
+    const url = editingId
+      ? `${API}/api/admin/contents/${editingId}`
       : `${API}/api/admin/contents`;
     setSaving(true);
     try {
-      const res = await fetch(url, {
-        method: form.id ? "PUT" : "POST",
+      let res = await fetch(url, {
+        method: editingId ? "PUT" : "POST",
         headers: authHeaders(token),
         body: JSON.stringify(payload),
       });
-      if (!res.ok) {
-        setError("保存失败");
+      // 记录已被删：自动改为新建
+      if (editingId && res.status === 404) {
+        res = await fetch(`${API}/api/admin/contents`, {
+          method: "POST",
+          headers: authHeaders(token),
+          body: JSON.stringify(payload),
+        });
+      }
+      if (res.status === 401) {
+        logout();
         return;
       }
-      setOkMsg(form.id ? "已更新并保存" : "已新建并保存");
-      if (!form.id || tab === "messages") setForm(emptyForm());
+      if (!res.ok) {
+        let detail = "";
+        try {
+          const body = await res.json();
+          detail =
+            typeof body?.detail === "string"
+              ? body.detail
+              : JSON.stringify(body?.detail ?? "");
+        } catch {
+          /* ignore */
+        }
+        setError(
+          detail
+            ? `保存失败（${res.status}）：${detail}`
+            : `保存失败（HTTP ${res.status}）`
+        );
+        return;
+      }
+      setOkMsg(editingId ? "已更新并保存" : "已新建并保存");
+      if (!editingId || tab === "messages") setForm(emptyForm());
       if (tab === "messages") setComposerOpen(false);
       loadContents();
+    } catch {
+      setError("保存失败：无法连接 API");
     } finally {
       setSaving(false);
     }
