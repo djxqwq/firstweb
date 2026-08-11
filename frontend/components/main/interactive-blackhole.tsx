@@ -15,9 +15,11 @@ type Mote = {
 
 /**
  * Interactive blackhole: cursor warp, click accretion pulse, gravity motes.
+ * Kept inside Hero so it is not covered by previous sections (SnakeHub z-index).
  */
 export function InteractiveBlackhole() {
   const wrapRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const motesRef = useRef<Mote[]>([]);
   const idRef = useRef(0);
@@ -36,6 +38,17 @@ export function InteractiveBlackhole() {
   const videoFilter = useMotionTemplate`brightness(${brightness}) hue-rotate(${hue}deg) saturate(1.15)`;
 
   useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const tryPlay = () => {
+      void video.play().catch(() => {});
+    };
+    tryPlay();
+    video.addEventListener("loadeddata", tryPlay);
+    return () => video.removeEventListener("loadeddata", tryPlay);
+  }, []);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -46,7 +59,12 @@ export function InteractiveBlackhole() {
     const io = new IntersectionObserver(
       ([entry]) => {
         visible = entry.isIntersecting;
-        if (visible && !raf) raf = requestAnimationFrame(tick);
+        if (visible) {
+          void videoRef.current?.play().catch(() => {});
+          if (!raf) raf = requestAnimationFrame(tick);
+        } else {
+          videoRef.current?.pause();
+        }
       },
       { rootMargin: "80px" }
     );
@@ -74,10 +92,16 @@ export function InteractiveBlackhole() {
       ctx.clearRect(0, 0, w, h);
 
       const cx = w * 0.5 + (mouseRef.current.x - 0.5) * 40;
-      const cy = h * 0.28 + (mouseRef.current.y - 0.35) * 30;
+      const cy = h * 0.38 + (mouseRef.current.y - 0.35) * 30;
 
-      // accretion glow
-      const g = ctx.createRadialGradient(cx, cy, 8, cx, cy, 90 + pulseRef.current * 40);
+      const g = ctx.createRadialGradient(
+        cx,
+        cy,
+        8,
+        cx,
+        cy,
+        90 + pulseRef.current * 40
+      );
       g.addColorStop(0, `rgba(168,85,247,${0.18 + pulseRef.current * 0.25})`);
       g.addColorStop(0.4, `rgba(34,211,238,${0.08 + pulseRef.current * 0.12})`);
       g.addColorStop(1, "rgba(0,0,0,0)");
@@ -86,7 +110,6 @@ export function InteractiveBlackhole() {
       ctx.arc(cx, cy, 110 + pulseRef.current * 50, 0, Math.PI * 2);
       ctx.fill();
 
-      // gravity motes
       const next: Mote[] = [];
       for (const m of motesRef.current) {
         const dx = cx - m.x;
@@ -113,7 +136,6 @@ export function InteractiveBlackhole() {
       }
       motesRef.current = next;
 
-      // ambient orbit dust
       if (motesRef.current.length < 22 && Math.random() < 0.2) {
         const ang = Math.random() * Math.PI * 2;
         const rad = 70 + Math.random() * 160;
@@ -149,7 +171,7 @@ export function InteractiveBlackhole() {
     mouseRef.current = { x: nx, y: ny, active: true };
     mx.set((nx - 0.5) * 28);
     my.set((ny - 0.35) * 18);
-    const dist = Math.hypot(nx - 0.5, ny - 0.28);
+    const dist = Math.hypot(nx - 0.5, ny - 0.38);
     brightness.set(1 + Math.max(0, 0.25 - dist) * 1.2);
     hue.set((0.5 - nx) * 25);
     scale.set(1 + Math.max(0, 0.22 - dist) * 0.35);
@@ -191,23 +213,28 @@ export function InteractiveBlackhole() {
   return (
     <div
       ref={wrapRef}
-      className="absolute left-0 top-[-340px] z-0 h-full w-full cursor-crosshair"
+      className="pointer-events-auto absolute inset-0 z-0 cursor-crosshair"
       onMouseMove={onMove}
       onMouseLeave={onLeave}
       onClick={onClick}
       role="presentation"
     >
       <motion.video
+        ref={videoRef}
         data-lazy-video
         muted
         loop
         playsInline
-        preload="none"
+        autoPlay
+        preload="auto"
         style={{ x: sx, y: sy, scale, filter: videoFilter }}
-        className="rotate-180 h-full w-full object-cover"
+        className="absolute left-1/2 top-[-8%] h-[70%] w-[120%] max-w-none -translate-x-1/2 rotate-180 object-cover opacity-90"
       >
         <source src="/videos/blackhole.webm" type="video/webm" />
       </motion.video>
+
+      {/* soft fade so text stays readable */}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-[#030014]/20 to-[#030014]" />
 
       <canvas
         ref={canvasRef}

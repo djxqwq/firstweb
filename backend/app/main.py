@@ -414,6 +414,12 @@ def seed_if_empty(db: Session) -> None:
                         "csdn": "https://blog.csdn.net/2302_79866931",
                         "blog": "https://723539.xyz",
                         "bio": "浙江财经大学软件工程专业学生，专注于全栈开发和人工智能领域。热爱算法竞赛，擅长 C/C++、Python、Java 开发。",
+                        "tagline": "邓锦鑫 · 个人技术博客",
+                        "roles": [
+                            "全栈开发者 · Full-Stack Engineer",
+                            "算法竞赛选手 · Competitive Programmer",
+                            "AI / 物联网实践者 · Builder",
+                        ],
                     },
                     ensure_ascii=False,
                 ),
@@ -678,12 +684,30 @@ def get_profile(db: Session = Depends(get_db)):
         select(Content).where(Content.type == "profile", Content.published.is_(True))
     )
     if not row:
-        return {"name": "邓锦鑫", "role": "软件工程全栈开发者"}
+        return {
+            "name": "邓锦鑫",
+            "role": "软件工程全栈开发者",
+            "tagline": "邓锦鑫 · 个人技术博客",
+            "roles": [
+                "全栈开发者 · Full-Stack Engineer",
+                "算法竞赛选手 · Competitive Programmer",
+                "AI / 物联网实践者 · Builder",
+            ],
+            "bio": "浙江财经大学软件工程专业学生，专注于全栈开发和人工智能领域。热爱算法竞赛，擅长 C/C++、Python、Java 开发，致力于构建优雅、高效的解决方案。",
+        }
     data = content_to_out(row)
     body = data["body"] if isinstance(data["body"], dict) else {}
+    roles = body.get("roles")
+    if isinstance(roles, str):
+        roles = [r.strip() for r in roles.replace("\r", "").split("\n") if r.strip()]
+    if not isinstance(roles, list) or not roles:
+        role_one = body.get("role") or row.summary or ""
+        roles = [role_one] if role_one else []
     return {
         "name": body.get("name") or row.title,
         "role": body.get("role") or row.summary,
+        "tagline": body.get("tagline") or f"{body.get('name') or row.title or '邓锦鑫'} · 个人技术博客",
+        "roles": roles,
         "school": body.get("school", ""),
         "email": body.get("email", ""),
         "github": body.get("github", ""),

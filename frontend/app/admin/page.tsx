@@ -105,6 +105,15 @@ type FormState = {
   tags: string;
   links: string;
   detail: string;
+  /** profile: Hero 角标 */
+  tagline: string;
+  /** profile: 轮播职位，一行一条 */
+  roles: string;
+  school: string;
+  email: string;
+  github: string;
+  csdn: string;
+  blog: string;
 };
 
 const emptyForm = (): FormState => ({
@@ -118,6 +127,13 @@ const emptyForm = (): FormState => ({
   tags: "",
   links: "",
   detail: "",
+  tagline: "",
+  roles: "",
+  school: "",
+  email: "",
+  github: "",
+  csdn: "",
+  blog: "",
 });
 
 /* ---------- 访客信息友好化解析 ---------- */
@@ -1128,7 +1144,21 @@ export default function AdminPage() {
         tab === "messages"
           ? { is_admin: true }
           : type === "profile"
-            ? { name: form.title, bio: form.summary }
+            ? {
+                name: form.title,
+                role: form.summary,
+                bio: form.detail || form.summary,
+                tagline: form.tagline || `${form.title} · 个人技术博客`,
+                roles: form.roles
+                  .split(/\r?\n/)
+                  .map((r) => r.trim())
+                  .filter(Boolean),
+                school: form.school,
+                email: form.email,
+                github: form.github,
+                csdn: form.csdn,
+                blog: form.blog,
+              }
             : form.detail
               ? { detail: form.detail }
               : {},
@@ -1168,10 +1198,21 @@ export default function AdminPage() {
       item.links && typeof item.links === "object"
         ? JSON.stringify(item.links)
         : "";
+    const body =
+      item.body && typeof item.body === "object"
+        ? (item.body as Record<string, unknown>)
+        : {};
     const detail =
-      item.body && typeof item.body === "object" && "detail" in item.body
-        ? String((item.body as { detail?: string }).detail || "")
-        : "";
+      typeof body.detail === "string"
+        ? body.detail
+        : typeof body.bio === "string"
+          ? body.bio
+          : "";
+    const rolesArr = Array.isArray(body.roles)
+      ? (body.roles as string[])
+      : typeof body.roles === "string"
+        ? String(body.roles).split(/\r?\n/)
+        : [];
     setForm({
       id: item.id,
       title: item.title || "",
@@ -1183,6 +1224,13 @@ export default function AdminPage() {
       tags,
       links,
       detail,
+      tagline: typeof body.tagline === "string" ? body.tagline : "",
+      roles: rolesArr.map((r) => String(r).trim()).filter(Boolean).join("\n"),
+      school: typeof body.school === "string" ? body.school : "",
+      email: typeof body.email === "string" ? body.email : "",
+      github: typeof body.github === "string" ? body.github : "",
+      csdn: typeof body.csdn === "string" ? body.csdn : "",
+      blog: typeof body.blog === "string" ? body.blog : "",
     });
   };
 
@@ -2371,7 +2419,11 @@ export default function AdminPage() {
                 </label>
                 <label className="block">
                   <span className="admin-field-label">
-                    {type === "internship" ? "时间段 · 职位" : "简介 / 摘要"}
+                    {type === "internship"
+                      ? "时间段 · 职位"
+                      : type === "profile"
+                        ? "一句话身份（贪吃蛇页 / 摘要）"
+                        : "简介 / 摘要"}
                   </span>
                 <textarea
                   className="admin-input min-h-[90px]"
@@ -2382,14 +2434,110 @@ export default function AdminPage() {
                   placeholder={
                     type === "internship"
                       ? "时间段 · 职位，如：2024-06 ~ 2024-09 · 后端开发实习生"
+                      : type === "profile"
+                        ? "软件工程全栈开发者 | 算法竞赛爱好者"
                       : "简介 / 摘要"
                   }
                 />
                 </label>
-                {(type === "project" || type === "profile" || type === "internship") && (
+                {type === "profile" && (
+                  <div className="space-y-3 rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-3">
+                    <p className="text-[11px] text-cyan-200/70">
+                      以下字段同步到首页 Hero 介绍（黑洞区上方文案）
+                    </p>
+                    <label className="block">
+                      <span className="admin-field-label">角标文案</span>
+                      <input
+                        className="admin-input"
+                        value={form.tagline}
+                        onChange={(e) =>
+                          setForm({ ...form, tagline: e.target.value })
+                        }
+                        placeholder="邓锦鑫 · 个人技术博客"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="admin-field-label">
+                        轮播职位（一行一条）
+                      </span>
+                      <textarea
+                        className="admin-input min-h-[90px]"
+                        value={form.roles}
+                        onChange={(e) =>
+                          setForm({ ...form, roles: e.target.value })
+                        }
+                        placeholder={
+                          "全栈开发者 · Full-Stack Engineer\n算法竞赛选手 · Competitive Programmer"
+                        }
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="admin-field-label">个人简介</span>
+                      <textarea
+                        className="admin-input min-h-[100px]"
+                        value={form.detail}
+                        onChange={(e) =>
+                          setForm({ ...form, detail: e.target.value })
+                        }
+                        placeholder="完整自我介绍，显示在首页"
+                      />
+                    </label>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="block">
+                        <span className="admin-field-label">学校</span>
+                        <input
+                          className="admin-input"
+                          value={form.school}
+                          onChange={(e) =>
+                            setForm({ ...form, school: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="admin-field-label">邮箱</span>
+                        <input
+                          className="admin-input"
+                          value={form.email}
+                          onChange={(e) =>
+                            setForm({ ...form, email: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="admin-field-label">GitHub</span>
+                        <input
+                          className="admin-input"
+                          value={form.github}
+                          onChange={(e) =>
+                            setForm({ ...form, github: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="admin-field-label">CSDN</span>
+                        <input
+                          className="admin-input"
+                          value={form.csdn}
+                          onChange={(e) =>
+                            setForm({ ...form, csdn: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="block sm:col-span-2">
+                        <span className="admin-field-label">博客</span>
+                        <input
+                          className="admin-input"
+                          value={form.blog}
+                          onChange={(e) =>
+                            setForm({ ...form, blog: e.target.value })
+                          }
+                        />
+                      </label>
+                    </div>
+                  </div>
+                )}
+                {(type === "project" || type === "internship") && (
                   <>
-                    {(type === "project" || type === "internship") && (
-                      <>
                     <label className="block">
                       <span className="admin-field-label">详情</span>
                     <textarea
@@ -2433,9 +2581,10 @@ export default function AdminPage() {
                     />
                     </label>
                     )}
-                      </>
-                    )}
-                    {(type === "project" || type === "profile") && (
+                  </>
+                )}
+                {(type === "project" || type === "profile") && (
+                  <>
                     <label className="block">
                       <span className="admin-field-label">
                         {type === "profile" ? "头像 URL" : "封面 URL"}
@@ -2453,7 +2602,6 @@ export default function AdminPage() {
                       }
                     />
                     </label>
-                    )}
                     {form.cover_url && (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img

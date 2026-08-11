@@ -5,9 +5,9 @@ import { InteractiveBlackhole } from "@/components/main/interactive-blackhole";
 
 export const Hero = () => {
   return (
-    <div className="relative flex h-full w-full flex-col">
+    <section className="relative z-[2] flex min-h-[100svh] w-full flex-col overflow-hidden">
       <InteractiveBlackhole />
       <HeroContent />
-    </div>
+    </section>
   );
 };

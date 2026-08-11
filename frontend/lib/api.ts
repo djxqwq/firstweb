@@ -84,7 +84,19 @@ export async function fetchInternships() {
 }
 
 export async function fetchProfile() {
-  return getJson<Record<string, string>>("/api/profile");
+  return getJson<{
+    name?: string;
+    role?: string;
+    tagline?: string;
+    roles?: string[] | string;
+    bio?: string;
+    school?: string;
+    email?: string;
+    github?: string;
+    csdn?: string;
+    blog?: string;
+    cover_url?: string;
+  }>("/api/profile");
 }
 
 export type PublicMusicTrack = {
