@@ -15,11 +15,9 @@ type Mote = {
 
 /**
  * Interactive blackhole: cursor warp, click accretion pulse, gravity motes.
- * Layout matches prior working version: top-[-340px] full-bleed video.
  */
 export function InteractiveBlackhole() {
   const wrapRef = useRef<HTMLDivElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const motesRef = useRef<Mote[]>([]);
   const idRef = useRef(0);
@@ -38,17 +36,6 @@ export function InteractiveBlackhole() {
   const videoFilter = useMotionTemplate`brightness(${brightness}) hue-rotate(${hue}deg) saturate(1.15)`;
 
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    const tryPlay = () => {
-      void video.play().catch(() => {});
-    };
-    tryPlay();
-    video.addEventListener("loadeddata", tryPlay);
-    return () => video.removeEventListener("loadeddata", tryPlay);
-  }, []);
-
-  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -59,14 +46,9 @@ export function InteractiveBlackhole() {
     const io = new IntersectionObserver(
       ([entry]) => {
         visible = entry.isIntersecting;
-        if (visible) {
-          void videoRef.current?.play().catch(() => {});
-          if (!raf) raf = requestAnimationFrame(tick);
-        } else {
-          videoRef.current?.pause();
-        }
+        if (visible && !raf) raf = requestAnimationFrame(tick);
       },
-      { rootMargin: "120px", threshold: 0.01 }
+      { rootMargin: "80px" }
     );
     if (wrapRef.current) io.observe(wrapRef.current);
 
@@ -91,18 +73,11 @@ export function InteractiveBlackhole() {
       const { width: w, height: h } = el.getBoundingClientRect();
       ctx.clearRect(0, 0, w, h);
 
-      // 引力中心：视频中心偏上（与原先一致）
       const cx = w * 0.5 + (mouseRef.current.x - 0.5) * 40;
       const cy = h * 0.28 + (mouseRef.current.y - 0.35) * 30;
 
-      const g = ctx.createRadialGradient(
-        cx,
-        cy,
-        8,
-        cx,
-        cy,
-        90 + pulseRef.current * 40
-      );
+      // accretion glow
+      const g = ctx.createRadialGradient(cx, cy, 8, cx, cy, 90 + pulseRef.current * 40);
       g.addColorStop(0, `rgba(168,85,247,${0.18 + pulseRef.current * 0.25})`);
       g.addColorStop(0.4, `rgba(34,211,238,${0.08 + pulseRef.current * 0.12})`);
       g.addColorStop(1, "rgba(0,0,0,0)");
@@ -111,6 +86,7 @@ export function InteractiveBlackhole() {
       ctx.arc(cx, cy, 110 + pulseRef.current * 50, 0, Math.PI * 2);
       ctx.fill();
 
+      // gravity motes
       const next: Mote[] = [];
       for (const m of motesRef.current) {
         const dx = cx - m.x;
@@ -137,6 +113,7 @@ export function InteractiveBlackhole() {
       }
       motesRef.current = next;
 
+      // ambient orbit dust
       if (motesRef.current.length < 22 && Math.random() < 0.2) {
         const ang = Math.random() * Math.PI * 2;
         const rad = 70 + Math.random() * 160;
@@ -170,13 +147,12 @@ export function InteractiveBlackhole() {
     const nx = (e.clientX - r.left) / r.width;
     const ny = (e.clientY - r.top) / r.height;
     mouseRef.current = { x: nx, y: ny, active: true };
-    // 轻微视差，不要太大（避免“跑到右边”）
-    mx.set((nx - 0.5) * 16);
-    my.set((ny - 0.35) * 10);
+    mx.set((nx - 0.5) * 28);
+    my.set((ny - 0.35) * 18);
     const dist = Math.hypot(nx - 0.5, ny - 0.28);
     brightness.set(1 + Math.max(0, 0.25 - dist) * 1.2);
     hue.set((0.5 - nx) * 25);
-    scale.set(1 + Math.max(0, 0.22 - dist) * 0.25);
+    scale.set(1 + Math.max(0, 0.22 - dist) * 0.35);
   };
 
   const onLeave = () => {
@@ -222,15 +198,13 @@ export function InteractiveBlackhole() {
       role="presentation"
     >
       <motion.video
-        ref={videoRef}
         data-lazy-video
         muted
         loop
         playsInline
-        autoPlay
-        preload="auto"
+        preload="none"
         style={{ x: sx, y: sy, scale, filter: videoFilter }}
-        className="h-full w-full rotate-180 object-cover"
+        className="rotate-180 h-full w-full object-cover"
       >
         <source src="/videos/blackhole.webm" type="video/webm" />
       </motion.video>

@@ -5,7 +5,7 @@ import { InteractiveBlackhole } from "@/components/main/interactive-blackhole";
 
 export const Hero = () => {
   return (
-    <div className="relative z-[3] flex h-full w-full flex-col">
+    <div className="relative flex h-full w-full flex-col">
       <InteractiveBlackhole />
       <HeroContent />
     </div>
