@@ -1,25 +1,43 @@
 "use client";
 
+/**
+ * Lightweight star cursor trail + click ripples.
+ * Inspired by common open-source cursor glitter demos (canvas, no heavy physics).
+ * Keeps particle count low to avoid competing with the fluid intro WebGL.
+ */
+
 import { useEffect, useRef } from "react";
 
-type Particle = {
+type Dot = {
   x: number;
   y: number;
   vx: number;
   vy: number;
+  life: number;
   r: number;
+  color: string;
+};
+
+type Ripple = {
+  x: number;
+  y: number;
+  r: number;
+  max: number;
   life: number;
   color: string;
 };
 
-/** Lightweight cursor trail — restored after perf trim */
 export function InteractiveCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
+    const fine = window.matchMedia("(pointer: fine)").matches;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!fine || reduce) return;
+
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { alpha: true });
     if (!ctx) return;
 
     let w = 0;
@@ -28,12 +46,15 @@ export function InteractiveCanvas() {
     let running = false;
     let lastX = -1;
     let lastY = -1;
-    const particles: Particle[] = [];
+    let lastSpawn = 0;
+    const dots: Dot[] = [];
+    const ripples: Ripple[] = [];
+    const COLORS = ["#67e8f9", "#a78bfa", "#f0abfc", "#e0f2fe"];
 
     const resize = () => {
       w = window.innerWidth;
       h = window.innerHeight;
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.25);
       canvas.width = Math.floor(w * dpr);
       canvas.height = Math.floor(h * dpr);
       canvas.style.width = `${w}px`;
@@ -48,60 +69,97 @@ export function InteractiveCanvas() {
     };
 
     const onMove = (e: MouseEvent) => {
+      const now = performance.now();
+      if (now - lastSpawn < 24) {
+        lastX = e.clientX;
+        lastY = e.clientY;
+        return;
+      }
+      lastSpawn = now;
       const x = e.clientX;
       const y = e.clientY;
       const dx = lastX < 0 ? 0 : x - lastX;
       const dy = lastY < 0 ? 0 : y - lastY;
-      const speed = Math.min(1, Math.hypot(dx, dy) / 28);
       lastX = x;
       lastY = y;
+      if (Math.hypot(dx, dy) < 2) return;
 
-      const n = speed > 0.15 ? 2 : 1;
-      for (let i = 0; i < n; i++) {
-        particles.push({
-          x: x + (Math.random() - 0.5) * 6,
-          y: y + (Math.random() - 0.5) * 6,
-          vx: (Math.random() - 0.5) * 0.8,
-          vy: (Math.random() - 0.5) * 0.8 - 0.2,
-          r: 1.4 + Math.random() * 2.2 + speed,
-          life: 0.85 + speed * 0.2,
-          color: i % 2 ? "#67e8f9" : "#c4b5fd",
-        });
-      }
-      if (particles.length > 40) particles.splice(0, particles.length - 40);
+      dots.push({
+        x,
+        y,
+        vx: (Math.random() - 0.5) * 0.4,
+        vy: (Math.random() - 0.5) * 0.4 - 0.15,
+        life: 0.7,
+        r: 1.2 + Math.random() * 1.6,
+        color: COLORS[(Math.random() * COLORS.length) | 0],
+      });
+      if (dots.length > 28) dots.splice(0, dots.length - 28);
       ensureLoop();
     };
 
-    const onLeave = () => {
-      lastX = -1;
-      lastY = -1;
+    const onClick = (e: MouseEvent) => {
+      const x = e.clientX;
+      const y = e.clientY;
+      ripples.push({
+        x,
+        y,
+        r: 2,
+        max: 56 + Math.random() * 24,
+        life: 1,
+        color: COLORS[(Math.random() * COLORS.length) | 0],
+      });
+      for (let i = 0; i < 12; i++) {
+        const ang = (Math.PI * 2 * i) / 12;
+        const sp = 1.8 + Math.random() * 2.2;
+        dots.push({
+          x,
+          y,
+          vx: Math.cos(ang) * sp,
+          vy: Math.sin(ang) * sp,
+          life: 0.95,
+          r: 1.4 + Math.random() * 1.8,
+          color: COLORS[i % COLORS.length],
+        });
+      }
+      if (dots.length > 40) dots.splice(0, dots.length - 40);
+      ensureLoop();
     };
 
     const draw = () => {
       ctx.clearRect(0, 0, w, h);
 
-      // soft glow under cursor tip of trail
-      if (particles.length) {
-        const tip = particles[particles.length - 1];
-        const g = ctx.createRadialGradient(tip.x, tip.y, 0, tip.x, tip.y, 48);
-        g.addColorStop(0, "rgba(103,232,249,0.12)");
-        g.addColorStop(1, "rgba(3,0,20,0)");
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(tip.x, tip.y, 48, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
-        p.x += p.vx;
-        p.y += p.vy;
-        p.life -= 0.022;
-        if (p.life <= 0) {
-          particles.splice(i, 1);
+      for (let i = ripples.length - 1; i >= 0; i--) {
+        const rp = ripples[i];
+        rp.r += (rp.max - rp.r) * 0.12 + 1.2;
+        rp.life -= 0.03;
+        if (rp.life <= 0 || rp.r >= rp.max) {
+          ripples.splice(i, 1);
           continue;
         }
-        ctx.globalAlpha = p.life * 0.9;
+        ctx.beginPath();
+        ctx.arc(rp.x, rp.y, rp.r, 0, Math.PI * 2);
+        ctx.strokeStyle = rp.color;
+        ctx.globalAlpha = rp.life * 0.55;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(rp.x, rp.y, rp.r * 0.55, 0, Math.PI * 2);
+        ctx.globalAlpha = rp.life * 0.25;
+        ctx.stroke();
+      }
+
+      for (let i = dots.length - 1; i >= 0; i--) {
+        const p = dots[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vx *= 0.92;
+        p.vy *= 0.92;
+        p.life -= 0.028;
+        if (p.life <= 0) {
+          dots.splice(i, 1);
+          continue;
+        }
+        ctx.globalAlpha = p.life;
         ctx.fillStyle = p.color;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
@@ -109,7 +167,7 @@ export function InteractiveCanvas() {
       }
       ctx.globalAlpha = 1;
 
-      if (particles.length) {
+      if (dots.length || ripples.length) {
         raf = requestAnimationFrame(draw);
       } else {
         running = false;
@@ -120,13 +178,13 @@ export function InteractiveCanvas() {
     resize();
     window.addEventListener("resize", resize);
     window.addEventListener("mousemove", onMove, { passive: true });
-    window.addEventListener("mouseleave", onLeave);
+    window.addEventListener("mousedown", onClick);
 
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
       window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseleave", onLeave);
+      window.removeEventListener("mousedown", onClick);
     };
   }, []);
 

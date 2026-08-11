@@ -39,7 +39,9 @@ export const SkillDataProvider = ({
   const [broken, setBroken] = useState(false);
   const size = Math.min(Math.max(width, height), 64);
   const tile = size + 28;
-  const fb = FALLBACK[src];
+  const fb = FALLBACK[src] || FALLBACK[src.split("/").pop() || ""];
+  const isRemote = /^https?:\/\//i.test(src);
+  const imgSrc = isRemote ? src : `/skills/${src}`;
 
   // 3D 倾斜效果 - 更平滑
   const rotateX = useMotionValue(0);
@@ -122,11 +124,11 @@ export const SkillDataProvider = ({
             </span>
           ) : (
             <Image
-              src={`/skills/${src}`}
+              src={imgSrc}
               width={size}
               height={size}
               alt={name}
-              unoptimized={src.endsWith(".svg")}
+              unoptimized
               className="object-contain"
               style={{ width: size, height: "auto", maxHeight: size }}
               draggable={false}

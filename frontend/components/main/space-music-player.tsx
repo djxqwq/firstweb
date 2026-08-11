@@ -68,19 +68,50 @@ export function SpaceMusicPlayer() {
     return () => audio.removeEventListener("ended", onEnded);
   }, [track, playlist.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 自动播放尝试
+  // 自动播放：启动即尝试；被浏览器拦截后，任意用户手势立即续播
   useEffect(() => {
-    if (!track) return;
+    if (!track || !enabled) return;
     const audio = audioRef.current;
     if (!audio) return;
-    const timer = setTimeout(() => {
+
+    let unlocked = false;
+    const tryPlay = () => {
+      if (unlocked) return;
+      audio.volume = volume;
       audio
         .play()
-        .then(() => setPlaying(true))
+        .then(() => {
+          unlocked = true;
+          setPlaying(true);
+          setAutoPlayBlocked(false);
+        })
         .catch(() => setAutoPlayBlocked(true));
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, [track]); // eslint-disable-line react-hooks/exhaustive-deps
+    };
+
+    const timer = window.setTimeout(tryPlay, 400);
+
+    const unlock = () => {
+      tryPlay();
+      if (unlocked) {
+        window.removeEventListener("pointerdown", unlock);
+        window.removeEventListener("keydown", unlock);
+        window.removeEventListener("touchstart", unlock);
+        window.removeEventListener("wheel", unlock);
+      }
+    };
+    window.addEventListener("pointerdown", unlock, { passive: true });
+    window.addEventListener("keydown", unlock);
+    window.addEventListener("touchstart", unlock, { passive: true });
+    window.addEventListener("wheel", unlock, { passive: true });
+
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+      window.removeEventListener("touchstart", unlock);
+      window.removeEventListener("wheel", unlock);
+    };
+  }, [track, enabled, volume]);
 
   const toggle = async () => {
     const audio = audioRef.current;

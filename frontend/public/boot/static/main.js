@@ -160,8 +160,6 @@
         "typingText",
         "statusText",
         "threatLevel",
-        "skipContainer",
-        "skipBtn",
         "mainContent",
         "glitchTitle",
       ];
@@ -182,35 +180,13 @@
     }
 
     bindEvents() {
-      const { skipBtn } = this.elements;
-      this.boundHandlers = {
-        skipClick: (e) => this.skip(e),
-        keydown: (e) => {
-          if (e.key === "Enter" || e.key === "Escape" || e.key === " ") {
-            e.preventDefault();
-            this.skip(e);
-          }
-        },
-      };
-      skipBtn.addEventListener("click", this.boundHandlers.skipClick);
-      this.eventCleanups.push(() =>
-        skipBtn.removeEventListener("click", this.boundHandlers.skipClick)
-      );
-      document.addEventListener("keydown", this.boundHandlers.keydown);
-      this.eventCleanups.push(() =>
-        document.removeEventListener("keydown", this.boundHandlers.keydown)
-      );
+      // 开场不可跳过：不绑定 SKIP / Enter / Esc
     }
 
     startLoading() {
       this.startTime = Date.now();
-      this.timers.skip = setTimeout(() => {
-        if (!this.isComplete) {
-          this.elements.skipContainer.classList.add("visible");
-        }
-      }, this.config.skipDelay);
 
-      // 仅作安全超时；真正结束需数据就绪（或用户 SKIP）
+      // 仅作安全超时；真正结束需数据就绪
       this.timers.timeout = setTimeout(() => {
         if (!this.isComplete && this.dataReady) {
           this.setProgress(100);

@@ -6,6 +6,7 @@ Inspired by tiangolo/full-stack-fastapi-template JWT/CRUD patterns.
 """
 from __future__ import annotations
 
+import re
 import csv
 import hashlib
 import io
@@ -985,8 +986,11 @@ def lookup_ip_geo(ip: str) -> dict:
 
     now = time.time()
     cached = _geo_cache.get(ip)
-    if cached and now - cached[0] < _GEO_CACHE_TTL:
-        return cached[1].copy()
+    if cached:
+        age = now - cached[0]
+        ttl = 300 if not (cached[1] or {}).get("district") else _GEO_CACHE_TTL
+        if age < ttl:
+            return cached[1].copy()
 
     result: dict = {}
 
@@ -1059,7 +1063,8 @@ def lookup_ip_geo(ip: str) -> dict:
                     result["country"] = "中国"
 
                 if region2 and not result.get("district"):
-                    result["district"] = region2
+                    # pconline region 常是「西湖区」这类区县
+                    result["district"] = region2.rstrip("市") if region2.endswith("区") or region2.endswith("县") or region2.endswith("旗") else region2
                 if not result.get("district") and addr:
                     addr_clean = addr
                     for part in (pro, city2, result.get("city", ""), result.get("region", "")):
@@ -1067,13 +1072,25 @@ def lookup_ip_geo(ip: str) -> dict:
                             addr_clean = addr_clean.replace(part, "")
                             addr_clean = addr_clean.replace(part + "市", "")
                             addr_clean = addr_clean.replace(part + "省", "")
-                    for sp in ("联通", "电信", "移动", "铁通", "长城", "广电", "教育网", "腾讯", "阿里", "华为"):
+                    for sp in (
+                        "联通", "电信", "移动", "铁通", "长城", "广电", "教育网",
+                        "腾讯", "阿里", "华为", "BGP", "数据中心", "IDC", "云",
+                    ):
                         addr_clean = addr_clean.replace(sp, "")
-                    addr_clean = addr_clean.strip()
-                    if addr_clean and 2 <= len(addr_clean) <= 8 and (
+                    addr_clean = addr_clean.strip(" -_/|")
+                    m = re.search(
+                        r"([\u4e00-\u9fff]{1,8}(?:区|县|旗|镇|街道))",
+                        addr_clean,
+                    )
+                    if m:
+                        cand = m.group(1)
+                        if cand not in (result.get("city"), result.get("region")):
+                            result["district"] = cand
+                    elif addr_clean and 2 <= len(addr_clean) <= 10 and (
                         "区" in addr_clean
                         or "县" in addr_clean
                         or "旗" in addr_clean
+                        or "镇" in addr_clean
                     ):
                         result["district"] = addr_clean
 
@@ -1134,14 +1151,14 @@ def lookup_ip_geo(ip: str) -> dict:
         except Exception:
             pass
 
-    # 4. Nominatim 区县
+    # 4. Nominatim 区县（提高 zoom，优先 suburb/city_district）
     if result.get("country") and not result.get("district") and result.get("_lat"):
         try:
             lat = result["_lat"]
             lon = result["_lon"]
             url4 = (
                 f"https://nominatim.openstreetmap.org/reverse"
-                f"?format=json&lat={lat}&lon={lon}&zoom=10&accept-language=zh-CN"
+                f"?format=json&lat={lat}&lon={lon}&zoom=14&addressdetails=1&accept-language=zh-CN"
             )
             req4 = urllib.request.Request(
                 url4,
@@ -1150,19 +1167,52 @@ def lookup_ip_geo(ip: str) -> dict:
             with urllib.request.urlopen(req4, timeout=5) as resp4:
                 data4 = json.loads(resp4.read().decode("utf-8"))
             addr4 = data4.get("address", {})
-            district_candidate = (
-                addr4.get("suburb", "")
-                or addr4.get("borough", "")
-                or addr4.get("county", "")
-                or addr4.get("city_district", "")
-            )
-            # 避免把「广州市」再当区县
-            if (
-                district_candidate
-                and len(district_candidate) <= 10
-                and district_candidate not in (result.get("city"), result.get("region"))
+            for key in (
+                "suburb",
+                "city_district",
+                "borough",
+                "quarter",
+                "neighbourhood",
+                "town",
+                "village",
+                "county",
             ):
+                district_candidate = (addr4.get(key) or "").strip()
+                if not district_candidate:
+                    continue
+                if district_candidate in (result.get("city"), result.get("region")):
+                    continue
+                if len(district_candidate) > 12:
+                    continue
                 result["district"] = district_candidate
+                break
+        except Exception:
+            pass
+
+    # 5. 仍无区县时：用百度地图 IP 定位公开接口补区（失败忽略）
+    if (
+        result.get("country")
+        and not result.get("district")
+        and ("中国" in (result.get("country") or "") or "China" in (result.get("country") or ""))
+    ):
+        try:
+            url5 = f"https://qifu-api.baidubce.com/ip/local/geo/v1/district?ip={ip}"
+            req5 = urllib.request.Request(
+                url5, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+            )
+            with urllib.request.urlopen(req5, timeout=4) as resp5:
+                data5 = json.loads(resp5.read().decode("utf-8"))
+            d = (data5.get("data") or {}) if isinstance(data5, dict) else {}
+            district5 = (
+                (d.get("district") or d.get("area") or d.get("city_district") or "")
+            ).strip()
+            if district5 and district5 not in (result.get("city"), result.get("region")):
+                result["district"] = district5
+                if not result.get("city") and d.get("city"):
+                    city5 = str(d.get("city")).replace("市", "")
+                    result["city"] = city5
+                if not result.get("region") and d.get("prov"):
+                    result["region"] = str(d.get("prov")).replace("省", "")
         except Exception:
             pass
 

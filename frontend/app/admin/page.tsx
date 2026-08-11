@@ -179,13 +179,13 @@ function ymdLocal(d: Date): string {
 }
 
 function heatCellColor(count: number, max: number): string {
-  if (count <= 0) return "rgba(255,255,255,0.045)";
+  if (count <= 0) return "rgba(8,12,28,0.55)";
   const t = Math.min(1, count / Math.max(max, 1));
-  // 越深人越多：浅青 → 深青紫
-  const r = Math.round(34 + (88 - 34) * t);
-  const g = Math.round(211 - 140 * t);
-  const b = Math.round(238 - 40 * t);
-  const a = 0.22 + t * 0.78;
+  // 星空热力：深空 → 青星 → 亮紫白
+  const r = Math.round(20 + 160 * t);
+  const g = Math.round(40 + 140 * t);
+  const b = Math.round(80 + 175 * t);
+  const a = 0.35 + t * 0.65;
   return `rgba(${r},${g},${b},${a})`;
 }
 
@@ -1460,17 +1460,31 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div className="relative rounded-2xl border border-violet-500/20 bg-[#0a0618] p-5">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <div className="relative max-w-xl overflow-hidden rounded-2xl border border-cyan-500/20 bg-[#060414] p-4 shadow-[inset_0_0_40px_rgba(56,189,248,0.06)]">
+              {/* 星空底纹（纯 CSS，无外部依赖） */}
+              <div
+                className="pointer-events-none absolute inset-0 opacity-70"
+                style={{
+                  backgroundImage:
+                    "radial-gradient(1px 1px at 12% 18%, rgba(255,255,255,0.7), transparent)," +
+                    "radial-gradient(1px 1px at 28% 62%, rgba(165,243,252,0.8), transparent)," +
+                    "radial-gradient(1.5px 1.5px at 48% 28%, rgba(255,255,255,0.9), transparent)," +
+                    "radial-gradient(1px 1px at 66% 74%, rgba(196,181,253,0.85), transparent)," +
+                    "radial-gradient(1px 1px at 82% 22%, rgba(255,255,255,0.55), transparent)," +
+                    "radial-gradient(1px 1px at 90% 58%, rgba(103,232,249,0.7), transparent)," +
+                    "radial-gradient(ellipse 80% 50% at 50% 120%, rgba(76,29,149,0.35), transparent)",
+                }}
+              />
+              <div className="relative mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <div className="text-xs tracking-widest text-violet-300/80">
-                    访客月历
+                  <div className="text-[11px] tracking-[0.2em] text-cyan-200/80">
+                    ✦ 星空月历
                   </div>
-                  <p className="mt-0.5 text-[11px] text-gray-500">
-                    颜色越深人数越多 · 悬停看详情 · 点击筛选当天访客
+                  <p className="mt-0.5 text-[10px] text-gray-500">
+                    越亮人越多 · 悬停详情 · 点击筛选
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <button
                     type="button"
                     onClick={() =>
@@ -1478,12 +1492,12 @@ export default function AdminPage() {
                         (m) => new Date(m.getFullYear(), m.getMonth() - 1, 1)
                       )
                     }
-                    className="rounded-lg border border-white/10 px-2.5 py-1 text-xs text-gray-300 hover:border-cyan-400/40"
+                    className="rounded-md border border-white/10 px-2 py-0.5 text-[11px] text-gray-300 hover:border-cyan-400/40"
                   >
-                    ‹ 上月
+                    ‹
                   </button>
-                  <span className="min-w-[7.5rem] text-center text-sm text-white">
-                    {calMonth.getFullYear()} 年 {calMonth.getMonth() + 1} 月
+                  <span className="min-w-[6.5rem] text-center text-xs text-white">
+                    {calMonth.getFullYear()} / {calMonth.getMonth() + 1}
                   </span>
                   <button
                     type="button"
@@ -1492,9 +1506,9 @@ export default function AdminPage() {
                         (m) => new Date(m.getFullYear(), m.getMonth() + 1, 1)
                       )
                     }
-                    className="rounded-lg border border-white/10 px-2.5 py-1 text-xs text-gray-300 hover:border-cyan-400/40"
+                    className="rounded-md border border-white/10 px-2 py-0.5 text-[11px] text-gray-300 hover:border-cyan-400/40"
                   >
-                    下月 ›
+                    ›
                   </button>
                   <button
                     type="button"
@@ -1502,34 +1516,29 @@ export default function AdminPage() {
                       const n = new Date();
                       setCalMonth(new Date(n.getFullYear(), n.getMonth(), 1));
                     }}
-                    className="rounded-lg border border-white/10 px-2.5 py-1 text-xs text-gray-400 hover:text-cyan-200"
+                    className="rounded-md border border-white/10 px-2 py-0.5 text-[11px] text-gray-400 hover:text-cyan-200"
                   >
                     本月
                   </button>
                   <button
                     type="button"
                     onClick={exportVisits}
-                    className="rounded-lg border border-cyan-400/40 px-3 py-1 text-xs text-cyan-200"
+                    className="rounded-md border border-cyan-400/40 px-2 py-0.5 text-[11px] text-cyan-200"
                   >
-                    导出 CSV
+                    CSV
                   </button>
                 </div>
               </div>
 
-              <div className="mb-1.5 grid grid-cols-7 gap-1.5 text-center text-[10px] text-gray-500">
+              <div className="relative mb-1 grid grid-cols-7 gap-1 text-center text-[9px] text-cyan-100/40">
                 {["一", "二", "三", "四", "五", "六", "日"].map((w) => (
                   <div key={w}>{w}</div>
                 ))}
               </div>
-              <div className="grid grid-cols-7 gap-1.5">
+              <div className="relative mx-auto grid max-w-sm grid-cols-7 gap-1">
                 {calendarCells.cells.map((c) => {
                   if (!c.inMonth || !c.day) {
-                    return (
-                      <div
-                        key={c.key}
-                        className="aspect-square rounded-lg bg-transparent"
-                      />
-                    );
+                    return <div key={c.key} className="h-7 rounded-md" />;
                   }
                   const intensity = c.unique || c.count;
                   const selected = visitDay === c.day;
@@ -1556,35 +1565,37 @@ export default function AdminPage() {
                       }}
                       onMouseMove={(e) => {
                         setHeatTip((t) =>
-                          t
-                            ? { ...t, x: e.clientX, y: e.clientY }
-                            : t
+                          t ? { ...t, x: e.clientX, y: e.clientY } : t
                         );
                       }}
                       onMouseLeave={() => setHeatTip(null)}
-                      className={`relative aspect-square rounded-lg border text-left transition ${
+                      className={`relative h-7 rounded-md border text-left transition ${
                         selected
-                          ? "border-cyan-300 ring-2 ring-cyan-400/50"
+                          ? "border-cyan-200 shadow-[0_0_10px_rgba(103,232,249,0.55)]"
                           : c.isToday
-                            ? "border-pink-400/50"
-                            : "border-white/5 hover:border-white/25"
-                      } ${c.isFuture ? "cursor-default opacity-30" : "cursor-pointer"}`}
+                            ? "border-fuchsia-300/60"
+                            : "border-white/5 hover:border-cyan-300/30"
+                      } ${c.isFuture ? "cursor-default opacity-25" : "cursor-pointer"}`}
                       style={{
                         background: heatCellColor(
                           intensity,
                           calendarCells.monthMax
                         ),
+                        boxShadow:
+                          intensity > 0
+                            ? `inset 0 0 ${4 + intensity}px rgba(165,243,252,${0.15 + Math.min(intensity / calendarCells.monthMax, 1) * 0.35})`
+                            : undefined,
                       }}
                     >
                       <span
-                        className={`absolute left-1 top-1 text-[10px] ${
-                          c.isToday ? "font-semibold text-pink-200" : "text-gray-300"
+                        className={`absolute left-0.5 top-0.5 text-[9px] leading-none ${
+                          c.isToday ? "font-semibold text-fuchsia-100" : "text-gray-300/90"
                         }`}
                       >
                         {c.label}
                       </span>
                       {intensity > 0 && (
-                        <span className="absolute bottom-1 right-1 text-[9px] font-medium text-white/90">
+                        <span className="absolute bottom-0.5 right-0.5 text-[8px] font-medium text-cyan-50/95">
                           {c.unique || c.count}
                         </span>
                       )}
@@ -1593,13 +1604,13 @@ export default function AdminPage() {
                 })}
               </div>
 
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-[10px] text-gray-500">
+              <div className="relative mt-2.5 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-[9px] text-gray-500">
                   <span>少</span>
                   {[0, 0.25, 0.5, 0.75, 1].map((t) => (
                     <span
                       key={t}
-                      className="inline-block h-3 w-3 rounded-sm border border-white/10"
+                      className="inline-block h-2.5 w-2.5 rounded-sm border border-white/10"
                       style={{
                         background: heatCellColor(
                           t * calendarCells.monthMax,
@@ -1612,27 +1623,25 @@ export default function AdminPage() {
                 </div>
                 {visitDay ? (
                   <div className="flex items-center gap-2">
-                    <span className="rounded-full border border-cyan-400/40 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-200">
+                    <span className="rounded-full border border-cyan-400/40 bg-cyan-500/10 px-2.5 py-0.5 text-[11px] text-cyan-200">
                       筛选 {visitDay}
                     </span>
                     <button
                       type="button"
                       onClick={() => setVisitDay(null)}
-                      className="text-xs text-gray-400 hover:text-white"
+                      className="text-[11px] text-gray-400 hover:text-white"
                     >
                       清除
                     </button>
                   </div>
                 ) : (
-                  <span className="text-[10px] text-gray-600">
-                    未筛选日期 · 显示全部访客
-                  </span>
+                  <span className="text-[9px] text-gray-600">点击日期筛选访客</span>
                 )}
               </div>
 
               {heatTip && (
                 <div
-                  className="pointer-events-none fixed z-[80] rounded-lg border border-white/15 bg-[#120a24]/95 px-2.5 py-1.5 text-[11px] text-cyan-100 shadow-lg backdrop-blur"
+                  className="pointer-events-none fixed z-[80] rounded-lg border border-cyan-400/25 bg-[#0a0618]/95 px-2.5 py-1.5 text-[11px] text-cyan-100 shadow-[0_0_20px_rgba(34,211,238,0.2)] backdrop-blur"
                   style={{
                     left: heatTip.x + 12,
                     top: heatTip.y + 12,
