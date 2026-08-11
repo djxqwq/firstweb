@@ -55,6 +55,7 @@ type VisitItem = {
 };
 
 type VisitorAgg = {
+  key?: string;
   visitor_id: string;
   ip_hash: string;
   note: string;
@@ -75,6 +76,13 @@ type VisitorAgg = {
   last_ua: string;
   sub_visitor_count?: number;
 };
+
+function visitorAggKey(v: Pick<VisitorAgg, "key" | "visitor_id" | "ip_hash" | "last_ip">) {
+  if (v.key) return v.key;
+  if (v.visitor_id) return v.visitor_id;
+  if (v.ip_hash) return `hash:${v.ip_hash}`;
+  return v.last_ip || "";
+}
 
 type VisitStats = {
   total: number;
@@ -492,12 +500,21 @@ export default function AdminPage() {
     if (res.ok) {
       setNoteEditingIp(null);
       setVisitors((prev) =>
-        prev.map((v) => {
-          const computedKey = v.visitor_id || `hash:${v.ip_hash}`;
-          return computedKey === key ? { ...v, note: noteText } : v;
-        })
+        prev.map((v) =>
+          visitorAggKey(v) === key ? { ...v, note: noteText } : v
+        )
       );
       setOkMsg("备注已保存");
+      setError("");
+    } else {
+      let detail = "备注保存失败";
+      try {
+        const data = await res.json();
+        if (data?.detail) detail = String(data.detail);
+      } catch {
+        /* ignore */
+      }
+      setError(detail);
     }
   };
 
@@ -522,16 +539,15 @@ export default function AdminPage() {
       // 从详情列表移除
       setVisitorRecords((prev) => prev.filter((r) => r.id !== visitId));
       // 更新聚合次数（-1，最少 0）；次数归零则从列表移除
-      setVisitors((prev) => {
-        const next = prev
+      setVisitors((prev) =>
+        prev
           .map((v) =>
-            v.visitor_id === selectedIp
+            visitorAggKey(v) === selectedIp
               ? { ...v, count: Math.max(0, v.count - 1) }
               : v
           )
-          .filter((v) => v.count > 0);
-        return next;
-      });
+          .filter((v) => v.count > 0)
+      );
       setOkMsg("已删除该记录（总访问数不变）");
     }
   };
@@ -554,7 +570,7 @@ export default function AdminPage() {
     }
     if (res.ok) {
       setVisitorRecords([]);
-      setVisitors((prev) => prev.filter((v) => v.visitor_id !== key));
+      setVisitors((prev) => prev.filter((v) => visitorAggKey(v) !== key));
       setSelectedIp(null);
       setOkMsg("已清空该访客所有记录（总访问数不变）");
     }
@@ -1757,9 +1773,9 @@ export default function AdminPage() {
                 </thead>
                 <tbody>
                   {filteredVisitors.map((v) => {
-                    // 聚合 key：优先 visitor_id，旧数据回退 hash:ip_hash
-                    const vkey = v.visitor_id || `hash:${v.ip_hash}`;
-                    const vc = hashColor(v.visitor_id || v.ip_hash);
+                    // 与后端聚合 key 对齐（含按 IP 合并模式）
+                    const vkey = visitorAggKey(v);
+                    const vc = hashColor(v.visitor_id || v.ip_hash || v.last_ip);
                     const isOpen = selectedIp === vkey;
                     const recent = isRecent(v.last_at);
                     const regionText = formatLocation(

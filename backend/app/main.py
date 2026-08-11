@@ -599,6 +599,8 @@ def _migrate_visitor_notes_table(engine) -> None:
     2. 若旧表只有 ip_hash 列没有 visitor_id 列，补上 visitor_id 列，
        并把旧 ip_hash 数据转成 'hash:{ip_hash}' 写入 visitor_id，
        这样旧访客（聚合 key 为 hash:ip_hash）的备注仍能匹配上。
+    3. 去掉 ip_hash 上的唯一约束（否则新备注 ip_hash 为空会互相冲突，导致保存失败）。
+    4. 尽量把 ip_hash 改为可空 / 默认空串。
     """
     with engine.connect() as conn:
         try:
@@ -640,6 +642,46 @@ def _migrate_visitor_notes_table(engine) -> None:
             except Exception:
                 conn.rollback()
 
+        # 刷新列信息
+        try:
+            inspector = sqlalchemy_inspect(conn)
+            cols = {c["name"] for c in inspector.get_columns("visitor_notes")}
+            indexes = inspector.get_indexes("visitor_notes")
+        except Exception:
+            cols = set()
+            indexes = []
+
+        # 去掉旧 ip_hash 唯一索引（空值冲突会导致备注写入失败）
+        for idx in indexes:
+            col_names = list(idx.get("column_names") or [])
+            if idx.get("unique") and col_names == ["ip_hash"]:
+                name = idx.get("name")
+                if not name:
+                    continue
+                try:
+                    conn.execute(sqlalchemy_text(f"DROP INDEX {name} ON visitor_notes"))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    try:
+                        conn.execute(sqlalchemy_text(f"DROP INDEX IF EXISTS {name}"))
+                        conn.commit()
+                    except Exception:
+                        conn.rollback()
+
+        # 放宽 ip_hash 约束，避免 INSERT 因 NOT NULL 失败
+        if "ip_hash" in cols:
+            for ddl in (
+                "ALTER TABLE visitor_notes MODIFY ip_hash VARCHAR(64) NULL DEFAULT ''",
+                "ALTER TABLE visitor_notes ALTER COLUMN ip_hash DROP NOT NULL",
+            ):
+                try:
+                    conn.execute(sqlalchemy_text(ddl))
+                    conn.commit()
+                    break
+                except Exception:
+                    conn.rollback()
+
         # 给 visitor_id 建唯一索引（若不存在）
         try:
             inspector = sqlalchemy_inspect(conn)
@@ -670,6 +712,27 @@ def _migrate_visitor_notes_table(engine) -> None:
                     conn.commit()
                 except Exception:
                     conn.rollback()
+
+
+def _lookup_visitor_note(
+    notes: dict[str, str],
+    *,
+    key: str = "",
+    visitor_id: str = "",
+    ip_hash: str = "",
+    ip: str = "",
+) -> str:
+    """按多种可能的绑定键查找备注（visitor_id / hash:ip_hash / 明文 IP）。"""
+    candidates = [
+        key,
+        visitor_id,
+        f"hash:{ip_hash}" if ip_hash else "",
+        ip,
+    ]
+    for c in candidates:
+        if c and notes.get(c):
+            return notes[c]
+    return ""
 
 
 # ---- Public ----
@@ -985,23 +1048,55 @@ def detect_device(ua: str) -> str:
 
 
 # ip-api.com 已知返回错误城市名的列表（这些不是真实城市名）
-_BAD_CITY_NAMES = {"南市", "Unknown", "unknown", ""}
+_BAD_CITY_NAMES = {"南市", "Unknown", "unknown", "", "内网IP", "保留地址"}
 
 # IP 地理位置内存缓存（避免对同一 IP 重复请求外部 API）
 _geo_cache: dict[str, tuple[float, dict]] = {}
 _GEO_CACHE_TTL = 3600  # 1 小时
 
 
+def _norm_region(name: str) -> str:
+    name = (name or "").strip()
+    if name.endswith("省") and len(name) > 2:
+        return name[:-1]
+    return name
+
+
+def _norm_city(name: str) -> str:
+    name = (name or "").strip()
+    if name in _BAD_CITY_NAMES:
+        return ""
+    if name.endswith("市") and len(name) > 2:
+        return name[:-1]
+    return name
+
+
+def _pick_district(*candidates: str, city: str = "", region: str = "") -> str:
+    """从候选里挑更可信的区县：优先「区/县/旗」，避免误用乡镇。"""
+    preferred: list[str] = []
+    fallback: list[str] = []
+    ban = {city, region, f"{city}市", f"{region}省", ""}
+    for raw in candidates:
+        d = (raw or "").strip()
+        if not d or d in ban or len(d) > 12:
+            continue
+        if d.endswith(("区", "县", "旗")):
+            preferred.append(d)
+        elif d.endswith(("镇", "乡", "街道", "村")):
+            fallback.append(d)
+        else:
+            fallback.append(d)
+    return (preferred or fallback or [""])[0]
+
+
 def lookup_ip_geo(ip: str) -> dict:
     """查询 IP 地理位置。
 
-    策略（中国云厂商 IP 常被国内库标成北京总部，优先信任 ip-api 节点位置）：
-    1. ip-api.com — 城市/省份主源（对腾讯云等 CDN 节点更准）
-    2. pconline — 仅补全空字段 / ISP，不覆盖已有准确城市
-    3. ipinfo.io — 英文城市补充（仅当城市仍空）
-    4. Nominatim — 区县补充
-
-    本地/内网 IP 直接返回空字典。结果缓存 1 小时。
+    策略：
+    1. 国内 IP：pconline 作省市主源（对中国电信宽带更准）；ip-api 作对照
+    2. 海外 / 云厂商：ip-api 主源更准
+    3. 若 ip-api 城市为脏数据（如「南市」），丢弃其城市与 lat/lon，避免 Nominatim 反查出错误乡镇
+    4. 区县优先取「区/县」，不轻易用镇/村
     """
     if not ip or ip in ("127.0.0.1", "localhost", "::1", ""):
         return {}
@@ -1017,8 +1112,11 @@ def lookup_ip_geo(ip: str) -> dict:
             return cached[1].copy()
 
     result: dict = {}
+    ipapi: dict = {}
+    pconline: dict = {}
+    ipapi_city_bad = False
 
-    # 1. ip-api.com — 主源
+    # 1. ip-api.com
     try:
         url = (
             f"http://ip-api.com/json/{ip}"
@@ -1028,105 +1126,133 @@ def lookup_ip_geo(ip: str) -> dict:
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         if data.get("status") == "success":
-            city = data.get("city", "") or ""
-            if city in _BAD_CITY_NAMES:
-                city = ""
-            # 去掉常见后缀方便展示
-            if city.endswith("市") and len(city) > 2:
-                city = city[:-1]
-            region = data.get("regionName", "") or ""
-            if region.endswith("省") and len(region) > 2:
-                region = region[:-1]
-            result = {
-                "country": data.get("country", ""),
-                "region": region,
+            raw_city = (data.get("city") or "").strip()
+            ipapi_city_bad = raw_city in _BAD_CITY_NAMES
+            city = "" if ipapi_city_bad else _norm_city(raw_city)
+            ipapi = {
+                "country": data.get("country", "") or "",
+                "region": _norm_region(data.get("regionName", "") or ""),
                 "city": city,
-                "district": data.get("district", "") or "",
+                "district": (data.get("district") or "").strip(),
                 "isp": data.get("isp", "") or data.get("org", "") or "",
-                "_lat": data.get("lat"),
-                "_lon": data.get("lon"),
+                # 城市脏数据时坐标也不可信（会导致 Nominatim 反查到错误乡镇）
+                "_lat": None if ipapi_city_bad else data.get("lat"),
+                "_lon": None if ipapi_city_bad else data.get("lon"),
+                "_city_bad": ipapi_city_bad,
             }
     except Exception:
         pass
 
-    # 2. pconline — 只补空，不覆盖（腾讯云等常被错标北京）
-    is_cn = bool(result.get("country")) and (
-        "中国" in result["country"] or "China" in result["country"]
+    # 2. pconline（国内宽带）
+    try:
+        url2 = f"https://whois.pconline.com.cn/ipJson.jsp?ip={ip}&json=true"
+        req2 = urllib.request.Request(
+            url2,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            },
+        )
+        with urllib.request.urlopen(req2, timeout=5) as resp2:
+            raw = resp2.read().decode("gbk", errors="ignore")
+        data2 = json.loads(raw)
+        if data2 and not data2.get("err"):
+            pro = _norm_region((data2.get("pro") or "").strip())
+            city2 = _norm_city((data2.get("city") or "").strip())
+            region2 = (data2.get("region") or "").strip()
+            addr = data2.get("addr") or ""
+            district_from_addr = ""
+            if region2.endswith(("区", "县", "旗", "镇", "街道")):
+                district_from_addr = region2
+            elif addr:
+                addr_clean = addr
+                for part in (pro, city2, f"{pro}省", f"{city2}市"):
+                    if part:
+                        addr_clean = addr_clean.replace(part, "")
+                for sp in (
+                    "联通", "电信", "移动", "铁通", "长城", "广电", "教育网",
+                    "腾讯", "阿里", "华为", "BGP", "数据中心", "IDC", "云",
+                ):
+                    addr_clean = addr_clean.replace(sp, "")
+                addr_clean = addr_clean.strip(" -_/|")
+                # 先找区/县，再考虑镇
+                m = re.search(r"([\u4e00-\u9fff]{1,8}(?:区|县|旗))", addr_clean)
+                if not m:
+                    m = re.search(r"([\u4e00-\u9fff]{1,8}(?:镇|街道))", addr_clean)
+                if m:
+                    district_from_addr = m.group(1)
+            isp2 = ""
+            if "电信" in addr:
+                isp2 = "中国电信"
+            elif "联通" in addr:
+                isp2 = "中国联通"
+            elif "移动" in addr:
+                isp2 = "中国移动"
+            elif "腾讯" in addr:
+                isp2 = "腾讯云"
+            pconline = {
+                "country": "中国",
+                "region": pro,
+                "city": city2,
+                "district": district_from_addr,
+                "isp": isp2,
+            }
+    except Exception:
+        pass
+
+    # 合并：国内且 pconline 有城市时，优先用 pconline（电信宽带常被 ip-api 标错）
+    prefer_pconline = bool(pconline.get("city")) and (
+        ipapi_city_bad
+        or not ipapi.get("city")
+        or (
+            pconline.get("city")
+            and ipapi.get("city")
+            and pconline["city"] != ipapi["city"]
+            and ("中国" in (ipapi.get("country") or "") or "China" in (ipapi.get("country") or "") or not ipapi)
+        )
     )
-    if is_cn or not result:
-        try:
-            url2 = f"https://whois.pconline.com.cn/ipJson.jsp?ip={ip}&json=true"
-            req2 = urllib.request.Request(
-                url2,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                },
-            )
-            with urllib.request.urlopen(req2, timeout=5) as resp2:
-                raw = resp2.read().decode("gbk", errors="ignore")
-            data2 = json.loads(raw)
-            if data2 and not data2.get("err"):
-                pro = (data2.get("pro") or "").strip()
-                city2 = (data2.get("city") or "").strip()
-                region2 = (data2.get("region") or "").strip()
-                addr = data2.get("addr") or ""
-                if city2.endswith("市") and len(city2) > 2:
-                    city2 = city2[:-1]
-                if pro.endswith("省") and len(pro) > 2:
-                    pro = pro[:-1]
-                if pro.endswith("市") and len(pro) > 2:
-                    # 直辖市
-                    pass
 
-                # 仅当主源缺失时才用 pconline 的省市
-                if not result.get("city") and city2:
-                    result["city"] = city2
-                if not result.get("region") and pro:
-                    result["region"] = pro
-                if not result.get("country"):
-                    result["country"] = "中国"
-
-                if region2 and not result.get("district"):
-                    # pconline region 常是「西湖区」这类区县
-                    result["district"] = region2.rstrip("市") if region2.endswith("区") or region2.endswith("县") or region2.endswith("旗") else region2
-                if not result.get("district") and addr:
-                    addr_clean = addr
-                    for part in (pro, city2, result.get("city", ""), result.get("region", "")):
-                        if part:
-                            addr_clean = addr_clean.replace(part, "")
-                            addr_clean = addr_clean.replace(part + "市", "")
-                            addr_clean = addr_clean.replace(part + "省", "")
-                    for sp in (
-                        "联通", "电信", "移动", "铁通", "长城", "广电", "教育网",
-                        "腾讯", "阿里", "华为", "BGP", "数据中心", "IDC", "云",
-                    ):
-                        addr_clean = addr_clean.replace(sp, "")
-                    addr_clean = addr_clean.strip(" -_/|")
-                    m = re.search(
-                        r"([\u4e00-\u9fff]{1,8}(?:区|县|旗|镇|街道))",
-                        addr_clean,
-                    )
-                    if m:
-                        cand = m.group(1)
-                        if cand not in (result.get("city"), result.get("region")):
-                            result["district"] = cand
-                    elif addr_clean and 2 <= len(addr_clean) <= 10 and (
-                        "区" in addr_clean
-                        or "县" in addr_clean
-                        or "旗" in addr_clean
-                        or "镇" in addr_clean
-                    ):
-                        result["district"] = addr_clean
-
-                if not result.get("isp") and addr:
-                    for sp in ("联通", "电信", "移动", "铁通", "长城", "广电"):
-                        if sp in addr:
-                            result["isp"] = f"中国{sp}"
-                            break
-                    if not result.get("isp") and "腾讯" in addr:
-                        result["isp"] = "腾讯云"
-        except Exception:
-            pass
+    if prefer_pconline:
+        result = {
+            "country": pconline.get("country") or ipapi.get("country") or "中国",
+            "region": pconline.get("region") or ipapi.get("region") or "",
+            "city": pconline.get("city") or "",
+            "district": _pick_district(
+                pconline.get("district", ""),
+                ipapi.get("district", ""),
+                city=pconline.get("city") or "",
+                region=pconline.get("region") or "",
+            ),
+            "isp": pconline.get("isp") or ipapi.get("isp") or "",
+            # 城市已改用国内源时，不用错误坐标做反查
+            "_lat": None if (ipapi_city_bad or (ipapi.get("city") and ipapi.get("city") != pconline.get("city"))) else ipapi.get("_lat"),
+            "_lon": None if (ipapi_city_bad or (ipapi.get("city") and ipapi.get("city") != pconline.get("city"))) else ipapi.get("_lon"),
+        }
+    else:
+        result = {
+            "country": ipapi.get("country") or pconline.get("country") or "",
+            "region": ipapi.get("region") or pconline.get("region") or "",
+            "city": ipapi.get("city") or pconline.get("city") or "",
+            "district": _pick_district(
+                ipapi.get("district", ""),
+                pconline.get("district", ""),
+                city=ipapi.get("city") or pconline.get("city") or "",
+                region=ipapi.get("region") or pconline.get("region") or "",
+            ),
+            "isp": ipapi.get("isp") or pconline.get("isp") or "",
+            "_lat": ipapi.get("_lat"),
+            "_lon": ipapi.get("_lon"),
+        }
+        # 仍缺字段时用 pconline 补
+        if not result["city"] and pconline.get("city"):
+            result["city"] = pconline["city"]
+        if not result["region"] and pconline.get("region"):
+            result["region"] = pconline["region"]
+        if not result["district"] and pconline.get("district"):
+            result["district"] = pconline["district"]
+        if not result["isp"] and pconline.get("isp"):
+            result["isp"] = pconline["isp"]
+        if not result["country"] and (result["city"] or result["region"]):
+            result["country"] = "中国"
 
     # 3. ipinfo — 仅补空城市
     if result.get("country") and not result.get("city"):
@@ -1159,8 +1285,11 @@ def lookup_ip_geo(ip: str) -> dict:
                     "Changsha": "长沙",
                     "Dongguan": "东莞",
                     "Foshan": "佛山",
+                    "Nanshi": "",  # 脏数据
                 }
-                result["city"] = _EN_CITY_MAP.get(en_city, en_city)
+                mapped = _EN_CITY_MAP.get(en_city, en_city)
+                if mapped:
+                    result["city"] = mapped
                 if not result.get("isp") and data3.get("org"):
                     org = data3.get("org", "")
                     for sp, cn in (
@@ -1175,8 +1304,16 @@ def lookup_ip_geo(ip: str) -> dict:
         except Exception:
             pass
 
-    # 4. Nominatim 区县（提高 zoom，优先 suburb/city_district）
-    if result.get("country") and not result.get("district") and result.get("_lat"):
+    # 4. Nominatim 区县 —— 仅在坐标可信且尚无「区/县」时使用；忽略乡镇级结果抢占
+    has_district_qu = bool(result.get("district")) and str(result["district"]).endswith(
+        ("区", "县", "旗")
+    )
+    if (
+        result.get("country")
+        and not has_district_qu
+        and result.get("_lat") is not None
+        and result.get("_lon") is not None
+    ):
         try:
             lat = result["_lat"]
             lon = result["_lon"]
@@ -1191,29 +1328,27 @@ def lookup_ip_geo(ip: str) -> dict:
             with urllib.request.urlopen(req4, timeout=5) as resp4:
                 data4 = json.loads(resp4.read().decode("utf-8"))
             addr4 = data4.get("address", {})
+            # 只要区县级，不要 town/village（容易变成「南马镇」这类错误）
             for key in (
-                "suburb",
                 "city_district",
+                "suburb",
                 "borough",
-                "quarter",
-                "neighbourhood",
-                "town",
-                "village",
+                "district",
                 "county",
             ):
                 district_candidate = (addr4.get(key) or "").strip()
-                if not district_candidate:
-                    continue
-                if district_candidate in (result.get("city"), result.get("region")):
-                    continue
-                if len(district_candidate) > 12:
-                    continue
-                result["district"] = district_candidate
-                break
+                picked = _pick_district(
+                    district_candidate,
+                    city=result.get("city") or "",
+                    region=result.get("region") or "",
+                )
+                if picked and picked.endswith(("区", "县", "旗")):
+                    result["district"] = picked
+                    break
         except Exception:
             pass
 
-    # 5. 仍无区县时：用百度地图 IP 定位公开接口补区（失败忽略）
+    # 5. 仍无区县：百度公开接口（失败忽略）
     if (
         result.get("country")
         and not result.get("district")
@@ -1227,21 +1362,30 @@ def lookup_ip_geo(ip: str) -> dict:
             with urllib.request.urlopen(req5, timeout=4) as resp5:
                 data5 = json.loads(resp5.read().decode("utf-8"))
             d = (data5.get("data") or {}) if isinstance(data5, dict) else {}
-            district5 = (
-                (d.get("district") or d.get("area") or d.get("city_district") or "")
-            ).strip()
-            if district5 and district5 not in (result.get("city"), result.get("region")):
+            district5 = _pick_district(
+                d.get("district") or "",
+                d.get("area") or "",
+                d.get("city_district") or "",
+                city=result.get("city") or "",
+                region=result.get("region") or "",
+            )
+            if district5:
                 result["district"] = district5
                 if not result.get("city") and d.get("city"):
-                    city5 = str(d.get("city")).replace("市", "")
-                    result["city"] = city5
+                    result["city"] = _norm_city(str(d.get("city")))
                 if not result.get("region") and d.get("prov"):
-                    result["region"] = str(d.get("prov")).replace("省", "")
+                    result["region"] = _norm_region(str(d.get("prov")))
         except Exception:
             pass
 
+    # 最终兜底：若区县是镇/乡且城市已知，宁可留空也不展示错误乡镇
+    dist = (result.get("district") or "").strip()
+    if dist.endswith(("镇", "乡", "村")) and result.get("city"):
+        result["district"] = ""
+
     result.pop("_lat", None)
     result.pop("_lon", None)
+    result.pop("_city_bad", None)
     _geo_cache[ip] = (now, result.copy())
     return result
 
@@ -1371,6 +1515,22 @@ def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)
     # 查询地理信息 + 解析 UA，存完整访客信息
     geo = lookup_ip_geo(ip)
     bo = parse_browser_os(ua)
+    # 纠正同 IP 历史记录里被 Nominatim 误标的「xx镇」区县
+    try:
+        city_now = (geo.get("city") or "")[:64]
+        district_now = (geo.get("district") or "")[:64]
+        if city_now:
+            q_fix = db.query(Visit).filter(Visit.ip == ip[:64], Visit.deleted.is_(False))
+            for row in q_fix.limit(200).all():
+                old_d = (row.district or "").strip()
+                if old_d.endswith(("镇", "乡", "村")) and old_d != district_now:
+                    row.district = district_now
+                    if city_now and (not row.city or row.city != city_now):
+                        row.city = city_now
+                    if geo.get("region") and not row.region:
+                        row.region = geo.get("region", "")[:64]
+    except Exception:
+        pass
     db.add(
         Visit(
             ip_hash=ip_hash,
@@ -1788,21 +1948,32 @@ def admin_visitors(
         if day:
             q = q.where(_visit_day_expr() == day)
     rows = db.scalars(q.order_by(Visit.id.desc()).limit(5000)).all()
-    notes = {n.visitor_id: n.note for n in db.scalars(select(VisitorNote)).all()}
+    notes = {
+        n.visitor_id: (n.note or "")
+        for n in db.scalars(select(VisitorNote)).all()
+        if n.visitor_id
+    }
     agg: dict[str, dict] = {}
     for r in rows:
         if group_by == "ip":
             # 按 IP 聚合：同一 IP 的所有访问合并
-            key = r.ip or f"hash:{r.ip_hash}" or "unknown"
+            key = r.ip or (f"hash:{r.ip_hash}" if r.ip_hash else "unknown")
         else:
             # 默认：优先 visitor_id 聚合；旧数据无 visitor_id 时回退 ip_hash
-            key = r.visitor_id or f"hash:{r.ip_hash}" or "unknown"
+            key = r.visitor_id or (f"hash:{r.ip_hash}" if r.ip_hash else "unknown")
         a = agg.get(key)
         if a is None:
             a = {
+                "key": key,
                 "visitor_id": r.visitor_id or "",
                 "ip_hash": r.ip_hash or "",
-                "note": notes.get(key, "") or notes.get(r.visitor_id or "", ""),
+                "note": _lookup_visitor_note(
+                    notes,
+                    key=key,
+                    visitor_id=r.visitor_id or "",
+                    ip_hash=r.ip_hash or "",
+                    ip=r.ip or "",
+                ),
                 "count": 0,
                 "first_at": r.created_at,
                 "last_at": r.created_at,
@@ -1823,6 +1994,15 @@ def admin_visitors(
                 "sub_visitors": set(),
             }
             agg[key] = a
+        elif not a.get("note"):
+            # 合并过程中补上备注（同一 IP 下其它 visitor_id 可能有备注）
+            a["note"] = _lookup_visitor_note(
+                notes,
+                key=key,
+                visitor_id=r.visitor_id or "",
+                ip_hash=r.ip_hash or "",
+                ip=r.ip or "",
+            )
         a["count"] += 1
         if group_by == "ip" and r.visitor_id:
             a["sub_visitors"].add(r.visitor_id)
@@ -1843,6 +2023,11 @@ def admin_visitors(
                 a["last_path"] = r.path
                 a["last_referrer"] = r.referrer
                 a["last_ua"] = r.ua
+                # 保持 key 稳定；同步展示用的 visitor_id / ip_hash 为最新一条
+                if r.visitor_id:
+                    a["visitor_id"] = r.visitor_id
+                if r.ip_hash:
+                    a["ip_hash"] = r.ip_hash
     result = list(agg.values())
     result.sort(key=lambda x: x["last_at"] or datetime.min, reverse=True)
     for a in result:
@@ -1858,6 +2043,10 @@ def admin_visitors(
         )
         # set 不可 JSON 序列化，转为计数
         a["sub_visitor_count"] = len(a.pop("sub_visitors", set()))
+        # 历史脏数据：错误坐标反查出来的乡镇不展示
+        dist = (a.get("last_district") or "").strip()
+        if dist.endswith(("镇", "乡", "村")):
+            a["last_district"] = ""
     return result
 
 
@@ -1873,9 +2062,12 @@ def admin_visitor_records(
     key 可以是 visitor_id（优先）或回退到 ip_hash。只返回未软删除的记录。
     """
     q = select(Visit).where(Visit.deleted.is_(False))
-    # 优先按 visitor_id 匹配；若 key 以 hash: 前缀开头则按 ip_hash 匹配
+    # 优先按 visitor_id 匹配；hash: 前缀按 ip_hash；看起来像 IP 则按 ip 匹配
     if key.startswith("hash:"):
         q = q.where(Visit.ip_hash == key[5:])
+    elif ":" in key or key.count(".") == 3 or key.startswith("["):
+        # IPv4 / IPv6（含压缩形式粗略判断）
+        q = q.where(Visit.ip == key)
     else:
         q = q.where(Visit.visitor_id == key)
     rows = db.scalars(q.order_by(Visit.id.desc()).limit(min(max(limit, 1), 2000))).all()
@@ -1911,16 +2103,48 @@ def admin_visitor_note(
 ):
     """给某个访客设置备注。
 
-    key 可以是 visitor_id（新访客）或 hash:ip_hash（旧访客，无 visitor_id）。
-    备注按 key 绑定：新访客 IP 变了备注仍在；旧访客备注绑定到 hash:ip_hash。
+    key 可以是 visitor_id（新访客）、hash:ip_hash（旧访客）或明文 IP（按 IP 合并模式）。
     """
+    key = (key or "").strip()[:64]
+    if not key or key == "unknown":
+        raise HTTPException(status_code=400, detail="无效的访客 key")
+    note = (payload.note or "")[:500]
     existing = db.scalar(select(VisitorNote).where(VisitorNote.visitor_id == key))
     if existing:
-        existing.note = payload.note[:500]
+        existing.note = note
     else:
-        db.add(VisitorNote(visitor_id=key, note=payload.note[:500]))
-    db.commit()
-    return {"ok": True}
+        db.add(VisitorNote(visitor_id=key, note=note))
+    try:
+        db.commit()
+    except Exception:
+        # 兼容旧表仍要求 ip_hash / 仍有唯一约束的情况
+        db.rollback()
+        ih = key[5:] if key.startswith("hash:") else ""
+        try:
+            db.execute(
+                sqlalchemy_text(
+                    "INSERT INTO visitor_notes (visitor_id, ip_hash, note) "
+                    "VALUES (:vid, :ih, :note)"
+                ),
+                {"vid": key, "ih": ih or key[:64], "note": note},
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            # 已存在则更新
+            try:
+                db.execute(
+                    sqlalchemy_text(
+                        "UPDATE visitor_notes SET note = :note "
+                        "WHERE visitor_id = :vid OR ip_hash = :ih"
+                    ),
+                    {"note": note, "vid": key, "ih": ih or key[:64]},
+                )
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                raise HTTPException(status_code=500, detail=f"备注保存失败: {e}") from e
+    return {"ok": True, "key": key, "note": note}
 
 
 @app.delete("/api/admin/visits/{visit_id}")
@@ -1951,6 +2175,8 @@ def admin_visitor_records_clear(
     q = db.query(Visit).filter(Visit.deleted.is_(False))
     if key.startswith("hash:"):
         q = q.filter(Visit.ip_hash == key[5:])
+    elif ":" in key or key.count(".") == 3 or key.startswith("["):
+        q = q.filter(Visit.ip == key)
     else:
         q = q.filter(Visit.visitor_id == key)
     q.update({Visit.deleted: True}, synchronize_session=False)

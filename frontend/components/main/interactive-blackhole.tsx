@@ -13,9 +13,12 @@ type Mote = {
   life: number;
 };
 
+/** 视觉黑洞中心（相对容器比例）——与 rotate-180 视频洞口对齐 */
+const WELL_X = 0.5;
+const WELL_Y = 0.30;
+
 /**
- * Interactive blackhole kept inside Hero (no overlap onto SnakeHub).
- * Gravity well centered mid-upper of the video, not the very top.
+ * Interactive blackhole: video shifted up; gravity / click burst locked to hole.
  */
 export function InteractiveBlackhole() {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -23,8 +26,9 @@ export function InteractiveBlackhole() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const motesRef = useRef<Mote[]>([]);
   const idRef = useRef(0);
-  const mouseRef = useRef({ x: 0.5, y: 0.48, active: false });
+  const mouseRef = useRef({ x: WELL_X, y: WELL_Y, active: false });
   const pulseRef = useRef(0);
+  const sizeRef = useRef({ w: 1, h: 1 });
 
   const [pulses, setPulses] = useState(0);
 
@@ -74,6 +78,7 @@ export function InteractiveBlackhole() {
       const el = wrapRef.current;
       if (!el) return;
       const r = el.getBoundingClientRect();
+      sizeRef.current = { w: r.width, h: r.height };
       const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
       canvas.width = Math.floor(r.width * dpr);
       canvas.height = Math.floor(r.height * dpr);
@@ -88,12 +93,12 @@ export function InteractiveBlackhole() {
       raf = 0;
       const el = wrapRef.current;
       if (!el || !visible) return;
-      const { width: w, height: h } = el.getBoundingClientRect();
+      const { w, h } = sizeRef.current;
       ctx.clearRect(0, 0, w, h);
 
-      // 引力井：偏视频中部（不要贴顶）
-      const cx = w * 0.5 + (mouseRef.current.x - 0.5) * 40;
-      const cy = h * 0.48 + (mouseRef.current.y - 0.48) * 30;
+      // 引力井钉在视觉洞口，鼠标只做轻微偏移
+      const cx = w * WELL_X + (mouseRef.current.x - WELL_X) * 24;
+      const cy = h * WELL_Y + (mouseRef.current.y - WELL_Y) * 18;
 
       const g = ctx.createRadialGradient(
         cx,
@@ -170,16 +175,16 @@ export function InteractiveBlackhole() {
     const nx = (e.clientX - r.left) / r.width;
     const ny = (e.clientY - r.top) / r.height;
     mouseRef.current = { x: nx, y: ny, active: true };
-    mx.set((nx - 0.5) * 28);
-    my.set((ny - 0.48) * 18);
-    const dist = Math.hypot(nx - 0.5, ny - 0.48);
-    brightness.set(1 + Math.max(0, 0.25 - dist) * 1.2);
-    hue.set((0.5 - nx) * 25);
-    scale.set(1 + Math.max(0, 0.22 - dist) * 0.35);
+    mx.set((nx - WELL_X) * 22);
+    my.set((ny - WELL_Y) * 14);
+    const dist = Math.hypot(nx - WELL_X, ny - WELL_Y);
+    brightness.set(1 + Math.max(0, 0.28 - dist) * 1.2);
+    hue.set((WELL_X - nx) * 25);
+    scale.set(1 + Math.max(0, 0.22 - dist) * 0.3);
   };
 
   const onLeave = () => {
-    mouseRef.current.active = false;
+    mouseRef.current = { x: WELL_X, y: WELL_Y, active: false };
     mx.set(0);
     my.set(0);
     brightness.set(1);
@@ -187,23 +192,22 @@ export function InteractiveBlackhole() {
     scale.set(1);
   };
 
-  const onClick = (e: React.MouseEvent) => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const cx = e.clientX - r.left;
-    const cy = e.clientY - r.top;
+  const onClick = () => {
+    const { w, h } = sizeRef.current;
+    // 粒子从视觉洞口炸开，而不是从鼠标点（对齐黑洞）
+    const cx = w * WELL_X;
+    const cy = h * WELL_Y;
     pulseRef.current = Math.min(1.6, 1 + pulses * 0.08);
     scale.set(1.08);
     window.setTimeout(() => scale.set(1), 280);
     for (let i = 0; i < 18 + Math.min(pulses, 10); i++) {
-      const ang = (Math.PI * 2 * i) / 18;
+      const ang = (Math.PI * 2 * i) / 18 + Math.random() * 0.2;
       motesRef.current.push({
         id: ++idRef.current,
-        x: cx + Math.cos(ang) * 20,
-        y: cy + Math.sin(ang) * 20,
-        vx: Math.cos(ang) * 3,
-        vy: Math.sin(ang) * 3,
+        x: cx + Math.cos(ang) * 16,
+        y: cy + Math.sin(ang) * 16,
+        vx: Math.cos(ang) * 3.2,
+        vy: Math.sin(ang) * 3.2,
         r: 1.2 + Math.random(),
         life: 1,
       });
@@ -214,12 +218,13 @@ export function InteractiveBlackhole() {
   return (
     <div
       ref={wrapRef}
-      className="absolute inset-0 z-0 cursor-crosshair"
+      className="absolute inset-0 z-0 cursor-crosshair overflow-hidden"
       onMouseMove={onMove}
       onMouseLeave={onLeave}
       onClick={onClick}
       role="presentation"
     >
+      {/* 整体上移，洞口落在文案上方；勿用 left-1/2 + translate 以免和 Framer x 冲突 */}
       <motion.video
         ref={videoRef}
         data-lazy-video
@@ -229,7 +234,7 @@ export function InteractiveBlackhole() {
         autoPlay
         preload="auto"
         style={{ x: sx, y: sy, scale, filter: videoFilter }}
-        className="h-full w-full rotate-180 object-cover"
+        className="absolute left-0 top-[-18%] h-[118%] w-full max-w-none rotate-180 object-cover"
       >
         <source src="/videos/blackhole.webm" type="video/webm" />
       </motion.video>
