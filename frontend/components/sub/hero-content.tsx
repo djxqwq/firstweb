@@ -79,7 +79,7 @@ export const HeroContent = () => {
       if (p.tagline) setTagline(p.tagline);
       if (p.bio) setBio(p.bio);
       if (p.github) setGithub(p.github);
-      const r = (p as { roles?: string[] | string }).roles;
+      const r = p.roles;
       if (Array.isArray(r) && r.length) setRoles(r.map(String));
       else if (typeof r === "string" && r.trim()) {
         setRoles(
@@ -98,7 +98,7 @@ export const HeroContent = () => {
     <motion.div
       initial="hidden"
       animate="visible"
-      className="relative z-10 mt-28 flex w-full flex-row items-center justify-center px-6 pb-16 md:mt-36 md:px-20"
+      className="relative z-[20] mt-32 flex w-full flex-row items-center justify-center px-6 md:mt-40 md:px-20"
     >
       <div className="m-auto flex h-full w-full flex-col justify-center gap-5 text-start">
         <motion.div
@@ -121,25 +121,62 @@ export const HeroContent = () => {
           </span>
         </motion.div>
 
+        {/* 终端样式：后台同步的 role / bio */}
         <motion.div
           variants={slideInFromLeft(0.7)}
-          className="relative my-2 max-w-[600px] space-y-3 rounded-xl border border-[#7042f861] bg-[#0a0618]/75 px-5 py-4 shadow-[0_0_40px_rgba(112,66,248,0.18)] backdrop-blur-sm"
+          className="relative my-2 max-w-[600px] overflow-hidden rounded-xl border border-[#7042f861] bg-[#0a0618]/85 shadow-[0_0_40px_rgba(112,66,248,0.18)] backdrop-blur-sm"
           whileHover={{
             boxShadow: "0 0 48px rgba(34,211,238,0.22)",
             borderColor: "rgba(34,211,238,0.35)",
           }}
         >
-          <p className="min-h-[1.5rem] text-sm text-cyan-200/90 md:text-base">
-            <TypeWriter
-              lines={roles.length ? roles : DEFAULT_ROLES}
-              speed={38}
-              holdMs={1800}
-              className="text-cyan-200"
-            />
-          </p>
-          <p className="text-sm leading-7 text-gray-300 md:text-[15px]">
-            {bio}
-          </p>
+          <div className="flex items-center gap-2 border-b border-white/10 px-4 py-2">
+            <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f56]" />
+            <span className="h-2.5 w-2.5 rounded-full bg-[#ffbd2e]" />
+            <span className="h-2.5 w-2.5 rounded-full bg-[#27c93f]" />
+            <span className="ml-2 font-mono text-[11px] tracking-wider text-gray-500">
+              profile.ts — {name || "deng-jinxin"}
+            </span>
+          </div>
+
+          <div className="space-y-2 px-4 py-4 font-mono text-[13px] leading-6 md:text-sm">
+            <p className="text-gray-500">
+              <span className="text-purple-400">const</span>{" "}
+              <span className="text-cyan-300">role</span>{" "}
+              <span className="text-white/50">=</span>{" "}
+              <span className="text-amber-200/90">&quot;</span>
+              <TypeWriter
+                lines={roles.length ? roles : DEFAULT_ROLES}
+                speed={38}
+                holdMs={1800}
+                className="text-amber-200"
+              />
+              <span className="text-amber-200/90">&quot;</span>
+              <span className="text-white/50">;</span>
+            </p>
+
+            <p className="text-gray-400">
+              <span className="text-purple-400">const</span>{" "}
+              <span className="text-cyan-300">bio</span>{" "}
+              <span className="text-white/50">=</span>{" "}
+              <span className="text-emerald-300/90">&quot;</span>
+              <TypeWriter
+                lines={[bio || DEFAULT_BIO]}
+                loop={false}
+                speed={28}
+                holdMs={999999}
+                className="text-emerald-300/90"
+              />
+              <span className="text-emerald-300/90">&quot;</span>
+              <span className="text-white/50">;</span>
+            </p>
+
+            <p className="pt-1 text-gray-500">
+              <span className="text-purple-400">export default</span>{" "}
+              <span className="text-cyan-300">&#123; role, bio &#125;</span>
+              <span className="text-white/50">;</span>
+            </p>
+          </div>
         </motion.div>
 
         <motion.div
@@ -149,7 +186,11 @@ export const HeroContent = () => {
           <MagneticButton href="#projects" variant="primary">
             项目
           </MagneticButton>
-          <MagneticButton href={github || "https://github.com/djxqwq"} variant="cyan" external>
+          <MagneticButton
+            href={github || "https://github.com/djxqwq"}
+            variant="cyan"
+            external
+          >
             GitHub
           </MagneticButton>
           <MagneticButton href="#contact" variant="purple">

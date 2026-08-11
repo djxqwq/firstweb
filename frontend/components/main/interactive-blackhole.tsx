@@ -15,7 +15,7 @@ type Mote = {
 
 /**
  * Interactive blackhole: cursor warp, click accretion pulse, gravity motes.
- * Kept inside Hero so it is not covered by previous sections (SnakeHub z-index).
+ * Layout matches prior working version: top-[-340px] full-bleed video.
  */
 export function InteractiveBlackhole() {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -66,7 +66,7 @@ export function InteractiveBlackhole() {
           videoRef.current?.pause();
         }
       },
-      { rootMargin: "80px" }
+      { rootMargin: "120px", threshold: 0.01 }
     );
     if (wrapRef.current) io.observe(wrapRef.current);
 
@@ -91,8 +91,9 @@ export function InteractiveBlackhole() {
       const { width: w, height: h } = el.getBoundingClientRect();
       ctx.clearRect(0, 0, w, h);
 
+      // 引力中心：视频中心偏上（与原先一致）
       const cx = w * 0.5 + (mouseRef.current.x - 0.5) * 40;
-      const cy = h * 0.38 + (mouseRef.current.y - 0.35) * 30;
+      const cy = h * 0.28 + (mouseRef.current.y - 0.35) * 30;
 
       const g = ctx.createRadialGradient(
         cx,
@@ -169,12 +170,13 @@ export function InteractiveBlackhole() {
     const nx = (e.clientX - r.left) / r.width;
     const ny = (e.clientY - r.top) / r.height;
     mouseRef.current = { x: nx, y: ny, active: true };
-    mx.set((nx - 0.5) * 28);
-    my.set((ny - 0.35) * 18);
-    const dist = Math.hypot(nx - 0.5, ny - 0.38);
+    // 轻微视差，不要太大（避免“跑到右边”）
+    mx.set((nx - 0.5) * 16);
+    my.set((ny - 0.35) * 10);
+    const dist = Math.hypot(nx - 0.5, ny - 0.28);
     brightness.set(1 + Math.max(0, 0.25 - dist) * 1.2);
     hue.set((0.5 - nx) * 25);
-    scale.set(1 + Math.max(0, 0.22 - dist) * 0.35);
+    scale.set(1 + Math.max(0, 0.22 - dist) * 0.25);
   };
 
   const onLeave = () => {
@@ -213,7 +215,7 @@ export function InteractiveBlackhole() {
   return (
     <div
       ref={wrapRef}
-      className="pointer-events-auto absolute inset-0 z-0 cursor-crosshair"
+      className="absolute left-0 top-[-340px] z-0 h-full w-full cursor-crosshair"
       onMouseMove={onMove}
       onMouseLeave={onLeave}
       onClick={onClick}
@@ -228,13 +230,10 @@ export function InteractiveBlackhole() {
         autoPlay
         preload="auto"
         style={{ x: sx, y: sy, scale, filter: videoFilter }}
-        className="absolute left-1/2 top-[-8%] h-[70%] w-[120%] max-w-none -translate-x-1/2 rotate-180 object-cover opacity-90"
+        className="h-full w-full rotate-180 object-cover"
       >
         <source src="/videos/blackhole.webm" type="video/webm" />
       </motion.video>
-
-      {/* soft fade so text stays readable */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-[#030014]/20 to-[#030014]" />
 
       <canvas
         ref={canvasRef}

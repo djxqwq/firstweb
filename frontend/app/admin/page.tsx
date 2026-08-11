@@ -2443,7 +2443,7 @@ export default function AdminPage() {
                 {type === "profile" && (
                   <div className="space-y-3 rounded-xl border border-cyan-500/20 bg-cyan-500/[0.04] p-3">
                     <p className="text-[11px] text-cyan-200/70">
-                      以下字段同步到首页 Hero 介绍（黑洞区上方文案）
+                      以下字段以终端样式同步到首页 Hero（黑洞区上方）
                     </p>
                     <label className="block">
                       <span className="admin-field-label">角标文案</span>
