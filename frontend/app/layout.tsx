@@ -29,6 +29,7 @@ html.booting,html.booting body{overflow:hidden!important;}
 `,
           }}
         />
+      </head>
       <body
         className={cn(
           "bg-[#030014] overflow-y-scroll overflow-x-hidden antialiased",
