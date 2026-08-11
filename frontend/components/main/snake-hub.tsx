@@ -113,7 +113,7 @@ export function SnakeHub() {
     <section
       ref={sectionRef}
       id="hub"
-      className="relative z-0 h-screen w-full snap-start overflow-hidden bg-[#030014]"
+      className="relative h-screen w-full snap-start overflow-hidden bg-[#030014]"
     >
       <canvas
         ref={canvasRef}
