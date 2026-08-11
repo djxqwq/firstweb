@@ -14,9 +14,8 @@ type Mote = {
 };
 
 /**
- * Interactive blackhole — layout from space-portfolio era:
- * absolute top-[-340px] full-bleed rotate-180 video + gravity motes.
- * Hero must stack above SnakeHub (z-index) or the video is covered.
+ * Interactive blackhole kept inside Hero (no overlap onto SnakeHub).
+ * Gravity well centered mid-upper of the video, not the very top.
  */
 export function InteractiveBlackhole() {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -24,7 +23,7 @@ export function InteractiveBlackhole() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const motesRef = useRef<Mote[]>([]);
   const idRef = useRef(0);
-  const mouseRef = useRef({ x: 0.5, y: 0.35, active: false });
+  const mouseRef = useRef({ x: 0.5, y: 0.48, active: false });
   const pulseRef = useRef(0);
 
   const [pulses, setPulses] = useState(0);
@@ -67,7 +66,7 @@ export function InteractiveBlackhole() {
           videoRef.current?.pause();
         }
       },
-      { rootMargin: "200px", threshold: 0 }
+      { rootMargin: "120px", threshold: 0 }
     );
     if (wrapRef.current) io.observe(wrapRef.current);
 
@@ -92,10 +91,10 @@ export function InteractiveBlackhole() {
       const { width: w, height: h } = el.getBoundingClientRect();
       ctx.clearRect(0, 0, w, h);
 
+      // 引力井：偏视频中部（不要贴顶）
       const cx = w * 0.5 + (mouseRef.current.x - 0.5) * 40;
-      const cy = h * 0.28 + (mouseRef.current.y - 0.35) * 30;
+      const cy = h * 0.48 + (mouseRef.current.y - 0.48) * 30;
 
-      // accretion glow
       const g = ctx.createRadialGradient(
         cx,
         cy,
@@ -112,7 +111,6 @@ export function InteractiveBlackhole() {
       ctx.arc(cx, cy, 110 + pulseRef.current * 50, 0, Math.PI * 2);
       ctx.fill();
 
-      // gravity motes
       const next: Mote[] = [];
       for (const m of motesRef.current) {
         const dx = cx - m.x;
@@ -139,7 +137,6 @@ export function InteractiveBlackhole() {
       }
       motesRef.current = next;
 
-      // ambient orbit dust
       if (motesRef.current.length < 22 && Math.random() < 0.2) {
         const ang = Math.random() * Math.PI * 2;
         const rad = 70 + Math.random() * 160;
@@ -174,8 +171,8 @@ export function InteractiveBlackhole() {
     const ny = (e.clientY - r.top) / r.height;
     mouseRef.current = { x: nx, y: ny, active: true };
     mx.set((nx - 0.5) * 28);
-    my.set((ny - 0.35) * 18);
-    const dist = Math.hypot(nx - 0.5, ny - 0.28);
+    my.set((ny - 0.48) * 18);
+    const dist = Math.hypot(nx - 0.5, ny - 0.48);
     brightness.set(1 + Math.max(0, 0.25 - dist) * 1.2);
     hue.set((0.5 - nx) * 25);
     scale.set(1 + Math.max(0, 0.22 - dist) * 0.35);
@@ -217,16 +214,12 @@ export function InteractiveBlackhole() {
   return (
     <div
       ref={wrapRef}
-      className="absolute left-0 top-[-340px] z-[1] h-full w-full cursor-crosshair"
+      className="absolute inset-0 z-0 cursor-crosshair"
       onMouseMove={onMove}
       onMouseLeave={onLeave}
       onClick={onClick}
       role="presentation"
     >
-      {/*
-        Full-bleed video — do NOT use left-1/2 + -translate-x-1/2 with Framer x/y,
-        or transform clash shifts the video to the right.
-      */}
       <motion.video
         ref={videoRef}
         data-lazy-video
