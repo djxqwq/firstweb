@@ -80,7 +80,8 @@ type VisitStats = {
   total: number;
   unique?: number;
   today?: number;
-  days: { day: string; count: number }[];
+  today_unique?: number;
+  days: { day: string; count: number; unique?: number }[];
   devices?: Record<string, number>;
 };
 
@@ -159,6 +160,35 @@ function parsePath(path: string): string {
   return path;
 }
 
+/** 统一拼地区：国家 · 省 · 市 · 区 */
+function formatLocation(
+  country?: string,
+  region?: string,
+  city?: string,
+  district?: string
+): string {
+  return [country, region, city, district].filter(Boolean).join(" · ");
+}
+
+/** 本地日历日 YYYY-MM-DD（与后端 Asia/Shanghai 对齐，东八区） */
+function ymdLocal(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function heatCellColor(count: number, max: number): string {
+  if (count <= 0) return "rgba(255,255,255,0.045)";
+  const t = Math.min(1, count / Math.max(max, 1));
+  // 越深人越多：浅青 → 深青紫
+  const r = Math.round(34 + (88 - 34) * t);
+  const g = Math.round(211 - 140 * t);
+  const b = Math.round(238 - 40 * t);
+  const a = 0.22 + t * 0.78;
+  return `rgba(${r},${g},${b},${a})`;
+}
+
 function hashColor(hash: string): string {
   if (!hash) return "#888";
   const h = hash.slice(0, 6).padEnd(6, "0");
@@ -220,7 +250,7 @@ export default function AdminPage() {
     { id: number; title: string }[]
   >([]);
   const [msgSort, setMsgSort] = useState<"newest" | "oldest" | "unreplied">(
-    "newest"
+    "unreplied"
   );
   const [msgSearch, setMsgSearch] = useState("");
   const [msgPage, setMsgPage] = useState(1);
@@ -228,10 +258,62 @@ export default function AdminPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [groupByIp, setGroupByIp] = useState(false);
+  const [visitDay, setVisitDay] = useState<string | null>(null);
+  const [calMonth, setCalMonth] = useState(() => {
+    const n = new Date();
+    return new Date(n.getFullYear(), n.getMonth(), 1);
+  });
+  const [heatTip, setHeatTip] = useState<{
+    x: number;
+    y: number;
+    text: string;
+  } | null>(null);
+  const [contentQ, setContentQ] = useState("");
+  const [showPass, setShowPass] = useState(false);
+  const [loginQ, setLoginQ] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msgBadge, setMsgBadge] = useState(0);
+  const [composerOpen, setComposerOpen] = useState(false);
 
   useEffect(() => {
     setToken(localStorage.getItem("admin_token") || "");
   }, []);
+
+  // Toast 自动消失
+  useEffect(() => {
+    if (!okMsg) return;
+    const t = setTimeout(() => setOkMsg(""), 2800);
+    return () => clearTimeout(t);
+  }, [okMsg]);
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(""), 4500);
+    return () => clearTimeout(t);
+  }, [error]);
+
+  // 快捷键 1-5 切换 Tab
+  useEffect(() => {
+    if (!token) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const map: Record<string, typeof tab> = {
+        "1": "contents",
+        "2": "visits",
+        "3": "messages",
+        "4": "logins",
+        "5": "settings",
+      };
+      const next = map[e.key];
+      if (next) {
+        e.preventDefault();
+        setTab(next);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [token]);
 
   const title = useMemo(
     () => TYPES.find((t) => t.key === type)?.label || type,
@@ -281,19 +363,70 @@ export default function AdminPage() {
       logout();
       return;
     }
-    if (res.ok) setItems(await res.json());
+    if (res.ok) {
+      const data: ContentItem[] = await res.json();
+      setItems(data);
+      if (q === "message") {
+        const replied = new Set(
+          data
+            .map((item) => (item.body as { reply_to?: number } | undefined)?.reply_to)
+            .filter((id): id is number => typeof id === "number")
+        );
+        const unreplied = data.filter((item) => {
+          const body = item.body as
+            | { reply_to?: number; is_admin?: boolean }
+            | undefined;
+          if (body?.reply_to || body?.is_admin) return false;
+          return !replied.has(item.id);
+        }).length;
+        setMsgBadge(unreplied);
+      }
+    }
   }, [token, type, tab, logout]);
+
+  // 登录后预取留言角标 + 今日访客数（导航徽章）
+  useEffect(() => {
+    if (!token) return;
+    fetch(`${API}/api/admin/contents?type=message`, {
+      headers: authHeaders(token),
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: ContentItem[]) => {
+        if (!Array.isArray(data)) return;
+        const replied = new Set(
+          data
+            .map((item) => (item.body as { reply_to?: number } | undefined)?.reply_to)
+            .filter((id): id is number => typeof id === "number")
+        );
+        const unreplied = data.filter((item) => {
+          const body = item.body as
+            | { reply_to?: number; is_admin?: boolean }
+            | undefined;
+          if (body?.reply_to || body?.is_admin) return false;
+          return !replied.has(item.id);
+        }).length;
+        setMsgBadge(unreplied);
+      })
+      .catch(() => {});
+    fetch(`${API}/api/visits/stats?days=7`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data) setStats(data);
+      })
+      .catch(() => {});
+  }, [token]);
 
   const loadVisits = useCallback(async () => {
     if (!token) return;
+    const params = new URLSearchParams();
+    if (groupByIp) params.set("group_by", "ip");
+    if (visitDay) params.set("day", visitDay);
+    const qs = params.toString();
     const [vRes, sRes] = await Promise.all([
-      fetch(
-        `${API}/api/admin/visitors${groupByIp ? "?group_by=ip" : ""}`,
-        {
-          headers: authHeaders(token),
-        }
-      ),
-      fetch(`${API}/api/visits/stats`),
+      fetch(`${API}/api/admin/visitors${qs ? `?${qs}` : ""}`, {
+        headers: authHeaders(token),
+      }),
+      fetch(`${API}/api/visits/stats?days=400`),
     ]);
     if (vRes.status === 401) {
       logout();
@@ -301,7 +434,7 @@ export default function AdminPage() {
     }
     if (vRes.ok) setVisitors(await vRes.json());
     if (sRes.ok) setStats(await sRes.json());
-  }, [token, logout, groupByIp]);
+  }, [token, logout, groupByIp, visitDay]);
 
   const loadVisitorRecords = useCallback(
     async (key: string) => {
@@ -546,6 +679,7 @@ export default function AdminPage() {
       return (
         (v.last_ip || "").toLowerCase().includes(q) ||
         (v.ip_hash || "").toLowerCase().includes(q) ||
+        (v.visitor_id || "").toLowerCase().includes(q) ||
         (v.note || "").toLowerCase().includes(q) ||
         (v.last_path || "").toLowerCase().includes(q) ||
         (v.last_ua || "").toLowerCase().includes(q) ||
@@ -559,6 +693,98 @@ export default function AdminPage() {
       );
     });
   }, [visitors, visitQ, visitDevice]);
+
+  const filteredContents = useMemo(() => {
+    if (!contentQ.trim()) return items;
+    const q = contentQ.toLowerCase();
+    return items.filter(
+      (it) =>
+        (it.title || "").toLowerCase().includes(q) ||
+        (it.summary || "").toLowerCase().includes(q) ||
+        String(it.id).includes(q)
+    );
+  }, [items, contentQ]);
+
+  const filteredLogins = useMemo(() => {
+    if (!loginQ.trim()) return loginRecords;
+    const q = loginQ.toLowerCase();
+    return loginRecords.filter(
+      (r) =>
+        (r.username || "").toLowerCase().includes(q) ||
+        (r.ip_hash || "").toLowerCase().includes(q) ||
+        (r.device || "").toLowerCase().includes(q) ||
+        (r.ua || "").toLowerCase().includes(q)
+    );
+  }, [loginRecords, loginQ]);
+
+  const calendarCells = useMemo(() => {
+    const y = calMonth.getFullYear();
+    const m = calMonth.getMonth();
+    const first = new Date(y, m, 1);
+    // 周一为一周起点：Mon=0 … Sun=6
+    const startPad = (first.getDay() + 6) % 7;
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    const dayMap = new Map(
+      (stats?.days || []).map((d) => [
+        String(d.day).slice(0, 10),
+        { count: d.count, unique: d.unique ?? 0 },
+      ])
+    );
+    const cells: {
+      key: string;
+      day: string | null;
+      label: number | null;
+      count: number;
+      unique: number;
+      inMonth: boolean;
+      isToday: boolean;
+      isFuture: boolean;
+    }[] = [];
+    const todayStr = ymdLocal(new Date());
+    for (let i = 0; i < startPad; i++) {
+      cells.push({
+        key: `pad-${i}`,
+        day: null,
+        label: null,
+        count: 0,
+        unique: 0,
+        inMonth: false,
+        isToday: false,
+        isFuture: false,
+      });
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+      const day = ymdLocal(new Date(y, m, d));
+      const hit = dayMap.get(day);
+      cells.push({
+        key: day,
+        day,
+        label: d,
+        count: hit?.count ?? 0,
+        unique: hit?.unique ?? 0,
+        inMonth: true,
+        isToday: day === todayStr,
+        isFuture: day > todayStr,
+      });
+    }
+    while (cells.length % 7 !== 0) {
+      cells.push({
+        key: `tail-${cells.length}`,
+        day: null,
+        label: null,
+        count: 0,
+        unique: 0,
+        inMonth: false,
+        isToday: false,
+        isFuture: false,
+      });
+    }
+    const monthMax = Math.max(
+      1,
+      ...cells.filter((c) => c.inMonth).map((c) => c.unique || c.count)
+    );
+    return { cells, monthMax };
+  }, [calMonth, stats]);
 
   // 留言排序与过滤
   const sortedMessages = useMemo(() => {
@@ -896,32 +1122,40 @@ export default function AdminPage() {
       summary: form.summary,
       level: Number(form.level) || 0,
       sort_order: Number(form.sort_order) || 0,
-      published: !!form.published,
+      published: tab === "messages" ? true : !!form.published,
       cover_url: form.cover_url || "",
       body_json:
-        type === "profile"
-          ? { name: form.title, bio: form.summary }
-          : form.detail
-            ? { detail: form.detail }
-            : {},
+        tab === "messages"
+          ? { is_admin: true }
+          : type === "profile"
+            ? { name: form.title, bio: form.summary }
+            : form.detail
+              ? { detail: form.detail }
+              : {},
       tags_json: tags,
       links_json: links,
     };
     const url = form.id
       ? `${API}/api/admin/contents/${form.id}`
       : `${API}/api/admin/contents`;
-    const res = await fetch(url, {
-      method: form.id ? "PUT" : "POST",
-      headers: authHeaders(token),
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      setError("保存失败");
-      return;
+    setSaving(true);
+    try {
+      const res = await fetch(url, {
+        method: form.id ? "PUT" : "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        setError("保存失败");
+        return;
+      }
+      setOkMsg(form.id ? "已更新并保存" : "已新建并保存");
+      if (!form.id || tab === "messages") setForm(emptyForm());
+      if (tab === "messages") setComposerOpen(false);
+      loadContents();
+    } finally {
+      setSaving(false);
     }
-    setOkMsg("已保存");
-    setForm(emptyForm());
-    loadContents();
   };
 
   const edit = (item: ContentItem) => {
@@ -1007,37 +1241,68 @@ export default function AdminPage() {
 
   if (!token) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#05020f] px-4 text-gray-200">
+      <div className="admin-shell flex min-h-screen items-center justify-center px-4">
         <form
           onSubmit={login}
-          className="w-full max-w-md space-y-4 rounded-2xl border border-violet-500/30 bg-[#0a0618] p-8 shadow-[0_0_40px_rgba(112,66,248,0.2)]"
+          className="admin-card w-full max-w-md space-y-5 p-8 shadow-[0_0_60px_rgba(112,66,248,0.18)]"
         >
-          <h1 className="text-2xl font-semibold text-white">管理后台 · 邓锦鑫</h1>
-          <p className="text-sm text-gray-400">
-            单人 JWT 登录 · 账号见环境变量 ADMIN_USER
-          </p>
-          <input
-            className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 outline-none focus:border-cyan-400/50"
-            value={user}
-            onChange={(e) => setUser(e.target.value)}
-            placeholder="用户名"
-          />
-          <input
-            className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 outline-none focus:border-cyan-400/50"
-            type="password"
-            value={pass}
-            onChange={(e) => setPass(e.target.value)}
-            placeholder="密码"
-          />
+          <div className="flex items-center gap-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo.png"
+              alt=""
+              width={52}
+              height={52}
+              className="rounded-full ring-1 ring-white/15"
+            />
+            <div>
+              <h1 className="text-2xl font-semibold text-white">管理后台</h1>
+              <p className="text-sm text-gray-400">邓锦鑫 · 星空控制台</p>
+            </div>
+          </div>
+          <label className="block">
+            <span className="admin-field-label">用户名</span>
+            <input
+              className="admin-input"
+              value={user}
+              onChange={(e) => setUser(e.target.value)}
+              placeholder="用户名"
+              autoComplete="username"
+              autoFocus
+            />
+          </label>
+          <label className="block">
+            <span className="admin-field-label">密码</span>
+            <div className="relative">
+              <input
+                className="admin-input pr-16"
+                type={showPass ? "text" : "password"}
+                value={pass}
+                onChange={(e) => setPass(e.target.value)}
+                placeholder="密码"
+                autoComplete="current-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPass((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-[11px] text-gray-400 hover:text-cyan-200"
+              >
+                {showPass ? "隐藏" : "显示"}
+              </button>
+            </div>
+          </label>
           {error && <p className="text-sm text-amber-300">{error}</p>}
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-xl bg-gradient-to-r from-violet-600 to-cyan-600 py-3 font-medium text-white disabled:opacity-60"
+            className="admin-btn admin-btn-primary w-full py-3 text-sm font-medium"
           >
-            {loading ? "登录中…" : "登录"}
+            {loading ? "登录中…" : "进入控制台"}
           </button>
-          <Link href="/" className="block text-center text-sm text-cyan-300">
+          <Link
+            href="/"
+            className="block text-center text-sm text-cyan-300/90 hover:text-cyan-200"
+          >
             ← 返回站点
           </Link>
         </form>
@@ -1046,181 +1311,330 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#05020f] px-4 py-8 text-gray-200 md:px-8">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-violet-500/30 bg-[#0a0618] p-5">
-          <div>
-            <h1 className="text-xl font-semibold text-white md:text-2xl">
-              星空管理台
-            </h1>
-            <p className="text-xs text-gray-500">API · {API}</p>
+    <div className="admin-shell px-4 pb-12 pt-4 md:px-8">
+      <div className="mx-auto max-w-6xl space-y-5">
+        <div className="sticky top-0 z-40 -mx-4 space-y-3 border-b border-white/5 bg-[#05020f]/85 px-4 py-3 backdrop-blur-md md:mx-0 md:rounded-2xl md:border md:border-violet-500/25 md:bg-[#0a0618]/92 md:px-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/logo.png"
+                alt=""
+                width={36}
+                height={36}
+                className="rounded-full ring-1 ring-white/10"
+              />
+              <div>
+                <h1 className="text-lg font-semibold text-white md:text-xl">
+                  星空管理台
+                </h1>
+                <p className="text-[11px] text-gray-500">
+                  快捷键 1–5 切换分区 · Esc 无焦点时可用
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Link href="/" className="admin-btn admin-btn-ghost text-xs">
+                查看站点
+              </Link>
+              <button
+                type="button"
+                onClick={logout}
+                className="admin-btn admin-btn-danger text-xs"
+              >
+                退出
+              </button>
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
             {(
               [
-                ["contents", "内容"],
-                ["visits", "访客"],
-                ["logins", "登录"],
-                ["messages", "留言"],
-                ["settings", "设置"],
+                ["contents", "内容", null],
+                ["visits", "访客", stats?.today_unique ?? stats?.today ?? null],
+                ["messages", "留言", msgBadge || null],
+                ["logins", "登录", null],
+                ["settings", "设置", null],
               ] as const
-            ).map(([k, label]) => (
+            ).map(([k, label, badge], idx) => (
               <button
                 key={k}
                 type="button"
                 onClick={() => setTab(k)}
-                className={`rounded-lg border px-3 py-1.5 text-sm ${
-                  tab === k
-                    ? "border-cyan-400/60 text-cyan-200"
-                    : "border-white/10 text-gray-400"
+                title={`快捷键 ${idx + 1}`}
+                className={`admin-tab ${
+                  tab === k ? "admin-tab-active" : "admin-tab-idle"
                 }`}
               >
+                <span className="mr-1 hidden text-[10px] opacity-40 sm:inline">
+                  {idx + 1}
+                </span>
                 {label}
+                {typeof badge === "number" && badge > 0 && (
+                  <span className="admin-badge">{badge > 99 ? "99+" : badge}</span>
+                )}
               </button>
             ))}
-            <Link
-              href="/"
-              className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-gray-400 hover:text-white"
-            >
-              站点
-            </Link>
-            <button
-              type="button"
-              onClick={logout}
-              className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-gray-400"
-            >
-              退出
-            </button>
           </div>
         </div>
 
-        {error && (
-          <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200">
-            {error}
-          </p>
-        )}
-        {okMsg && (
-          <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200">
-            {okMsg}
-          </p>
+        {(error || okMsg) && (
+          <div
+            className={`admin-toast ${
+              error ? "admin-toast-err" : "admin-toast-ok"
+            }`}
+            role="status"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <span>{error || okMsg}</span>
+              <button
+                type="button"
+                className="text-xs opacity-70 hover:opacity-100"
+                onClick={() => {
+                  setError("");
+                  setOkMsg("");
+                }}
+              >
+                关闭
+              </button>
+            </div>
+          </div>
         )}
 
         {tab === "visits" && (
           <div className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-2xl border border-cyan-500/20 bg-[#0a0618] p-5">
-                <div className="text-xs tracking-widest text-cyan-400/80">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="rounded-2xl border border-cyan-500/20 bg-[#0a0618] p-4">
+                <div className="text-[10px] tracking-widest text-cyan-400/80">
                   总访问
                 </div>
-                <div className="mt-2 text-3xl font-semibold text-white">
+                <div className="mt-1.5 text-2xl font-semibold text-white">
                   {stats?.total?.toLocaleString() ?? "—"}
                 </div>
               </div>
-              <div className="rounded-2xl border border-violet-500/20 bg-[#0a0618] p-5">
-                <div className="text-xs tracking-widest text-violet-300/80">
+              <div className="rounded-2xl border border-violet-500/20 bg-[#0a0618] p-4">
+                <div className="text-[10px] tracking-widest text-violet-300/80">
                   独立访客
                 </div>
-                <div className="mt-2 text-3xl font-semibold text-white">
+                <div className="mt-1.5 text-2xl font-semibold text-white">
                   {stats?.unique?.toLocaleString() ?? "—"}
                 </div>
               </div>
-              <div className="rounded-2xl border border-emerald-500/20 bg-[#0a0618] p-5">
-                <div className="text-xs tracking-widest text-emerald-300/80">
+              <div className="rounded-2xl border border-pink-500/20 bg-[#0a0618] p-4">
+                <div className="text-[10px] tracking-widest text-pink-300/80">
+                  今日
+                </div>
+                <div className="mt-1.5 text-2xl font-semibold text-white">
+                  {(stats?.today_unique ?? stats?.today ?? 0).toLocaleString()}
+                  <span className="ml-1 text-xs font-normal text-gray-500">
+                    人 / {stats?.today ?? 0} 次
+                  </span>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-emerald-500/20 bg-[#0a0618] p-4">
+                <div className="text-[10px] tracking-widest text-emerald-300/80">
                   Desktop
                 </div>
-                <div className="mt-2 text-3xl font-semibold text-white">
+                <div className="mt-1.5 text-2xl font-semibold text-white">
                   {stats?.devices?.desktop?.toLocaleString() ?? 0}
                 </div>
               </div>
-              <div className="rounded-2xl border border-amber-500/20 bg-[#0a0618] p-5">
-                <div className="text-xs tracking-widest text-amber-300/80">
+              <div className="rounded-2xl border border-amber-500/20 bg-[#0a0618] p-4">
+                <div className="text-[10px] tracking-widest text-amber-300/80">
                   Mobile
                 </div>
-                <div className="mt-2 text-3xl font-semibold text-white">
+                <div className="mt-1.5 text-2xl font-semibold text-white">
                   {stats?.devices?.mobile?.toLocaleString() ?? 0}
                 </div>
               </div>
             </div>
 
-            <div className="rounded-2xl border border-violet-500/20 bg-[#0a0618] p-5">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs tracking-widest text-violet-300/80">
-                  近 7 日趋势
-                </div>
-                <button
-                  type="button"
-                  onClick={exportVisits}
-                  className="rounded-lg border border-cyan-400/40 px-3 py-1 text-xs text-cyan-200"
-                >
-                  导出 CSV
-                </button>
-              </div>
-              {(() => {
-                // 补全最近 7 天，没有数据的日期填 0
-                const rawDays = stats?.days || [];
-                const dayMap = new Map(rawDays.map((d) => [d.day, d.count]));
-                const padded: { day: string; count: number }[] = [];
-                const now = new Date();
-                for (let i = 6; i >= 0; i--) {
-                  const dt = new Date(now);
-                  dt.setDate(dt.getDate() - i);
-                  const key = dt.toISOString().slice(0, 10);
-                  padded.push({ day: key, count: dayMap.get(key) ?? 0 });
-                }
-                const max = Math.max(1, ...padded.map((x) => x.count));
-                const total7 = padded.reduce((s, x) => s + x.count, 0);
-                return (
-                  <div className="flex items-end gap-2" style={{ height: 140 }}>
-                    {padded.map((d, i) => (
-                      <div
-                        key={d.day}
-                        className="flex flex-1 flex-col items-center justify-end gap-1.5"
-                        style={{ height: "100%" }}
-                      >
-                        <span className="text-[10px] font-medium text-cyan-200/80">
-                          {d.count > 0 ? d.count : ""}
-                        </span>
-                        <div
-                          className="w-full rounded-t bg-gradient-to-t from-violet-600 to-cyan-400 transition-all duration-300"
-                          style={{
-                            height: `${Math.max(d.count > 0 ? 6 : 2, (d.count / max) * 80)}%`,
-                            opacity: d.count > 0 ? 1 : 0.2,
-                          }}
-                          title={`${d.day}: ${d.count} 次访问`}
-                        />
-                        <span className="text-[9px] text-gray-500">
-                          {d.day.slice(5)}
-                        </span>
-                      </div>
-                    ))}
+            <div className="relative rounded-2xl border border-violet-500/20 bg-[#0a0618] p-5">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-xs tracking-widest text-violet-300/80">
+                    访客月历
                   </div>
-                );
-              })()}
-              {(stats?.days || []).length === 0 && (
-                <p className="py-4 text-center text-xs text-gray-600">
-                  暂无访问数据
-                </p>
-              )}
-              <div className="mt-2 text-right text-[10px] text-gray-600">
-                近 7 日合计 {(() => {
-                  const rawDays = stats?.days || [];
-                  const dayMap = new Map(rawDays.map((d) => [d.day, d.count]));
-                  let total = 0;
-                  const now = new Date();
-                  for (let i = 6; i >= 0; i--) {
-                    const dt = new Date(now);
-                    dt.setDate(dt.getDate() - i);
-                    total += dayMap.get(dt.toISOString().slice(0, 10)) ?? 0;
-                  }
-                  return total;
-                })()} 次访问
+                  <p className="mt-0.5 text-[11px] text-gray-500">
+                    颜色越深人数越多 · 悬停看详情 · 点击筛选当天访客
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCalMonth(
+                        (m) => new Date(m.getFullYear(), m.getMonth() - 1, 1)
+                      )
+                    }
+                    className="rounded-lg border border-white/10 px-2.5 py-1 text-xs text-gray-300 hover:border-cyan-400/40"
+                  >
+                    ‹ 上月
+                  </button>
+                  <span className="min-w-[7.5rem] text-center text-sm text-white">
+                    {calMonth.getFullYear()} 年 {calMonth.getMonth() + 1} 月
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCalMonth(
+                        (m) => new Date(m.getFullYear(), m.getMonth() + 1, 1)
+                      )
+                    }
+                    className="rounded-lg border border-white/10 px-2.5 py-1 text-xs text-gray-300 hover:border-cyan-400/40"
+                  >
+                    下月 ›
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const n = new Date();
+                      setCalMonth(new Date(n.getFullYear(), n.getMonth(), 1));
+                    }}
+                    className="rounded-lg border border-white/10 px-2.5 py-1 text-xs text-gray-400 hover:text-cyan-200"
+                  >
+                    本月
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exportVisits}
+                    className="rounded-lg border border-cyan-400/40 px-3 py-1 text-xs text-cyan-200"
+                  >
+                    导出 CSV
+                  </button>
+                </div>
               </div>
+
+              <div className="mb-1.5 grid grid-cols-7 gap-1.5 text-center text-[10px] text-gray-500">
+                {["一", "二", "三", "四", "五", "六", "日"].map((w) => (
+                  <div key={w}>{w}</div>
+                ))}
+              </div>
+              <div className="grid grid-cols-7 gap-1.5">
+                {calendarCells.cells.map((c) => {
+                  if (!c.inMonth || !c.day) {
+                    return (
+                      <div
+                        key={c.key}
+                        className="aspect-square rounded-lg bg-transparent"
+                      />
+                    );
+                  }
+                  const intensity = c.unique || c.count;
+                  const selected = visitDay === c.day;
+                  return (
+                    <button
+                      key={c.key}
+                      type="button"
+                      disabled={c.isFuture}
+                      onClick={() => {
+                        if (c.isFuture) return;
+                        setSelectedIp(null);
+                        setVisitorRecords([]);
+                        setVisitDay((prev) =>
+                          prev === c.day ? null : c.day
+                        );
+                      }}
+                      onMouseEnter={(e) => {
+                        const people = c.unique || c.count;
+                        setHeatTip({
+                          x: e.clientX,
+                          y: e.clientY,
+                          text: `${c.day} · ${people} 人 · ${c.count} 次`,
+                        });
+                      }}
+                      onMouseMove={(e) => {
+                        setHeatTip((t) =>
+                          t
+                            ? { ...t, x: e.clientX, y: e.clientY }
+                            : t
+                        );
+                      }}
+                      onMouseLeave={() => setHeatTip(null)}
+                      className={`relative aspect-square rounded-lg border text-left transition ${
+                        selected
+                          ? "border-cyan-300 ring-2 ring-cyan-400/50"
+                          : c.isToday
+                            ? "border-pink-400/50"
+                            : "border-white/5 hover:border-white/25"
+                      } ${c.isFuture ? "cursor-default opacity-30" : "cursor-pointer"}`}
+                      style={{
+                        background: heatCellColor(
+                          intensity,
+                          calendarCells.monthMax
+                        ),
+                      }}
+                    >
+                      <span
+                        className={`absolute left-1 top-1 text-[10px] ${
+                          c.isToday ? "font-semibold text-pink-200" : "text-gray-300"
+                        }`}
+                      >
+                        {c.label}
+                      </span>
+                      {intensity > 0 && (
+                        <span className="absolute bottom-1 right-1 text-[9px] font-medium text-white/90">
+                          {c.unique || c.count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-[10px] text-gray-500">
+                  <span>少</span>
+                  {[0, 0.25, 0.5, 0.75, 1].map((t) => (
+                    <span
+                      key={t}
+                      className="inline-block h-3 w-3 rounded-sm border border-white/10"
+                      style={{
+                        background: heatCellColor(
+                          t * calendarCells.monthMax,
+                          calendarCells.monthMax
+                        ),
+                      }}
+                    />
+                  ))}
+                  <span>多</span>
+                </div>
+                {visitDay ? (
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full border border-cyan-400/40 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-200">
+                      筛选 {visitDay}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setVisitDay(null)}
+                      className="text-xs text-gray-400 hover:text-white"
+                    >
+                      清除
+                    </button>
+                  </div>
+                ) : (
+                  <span className="text-[10px] text-gray-600">
+                    未筛选日期 · 显示全部访客
+                  </span>
+                )}
+              </div>
+
+              {heatTip && (
+                <div
+                  className="pointer-events-none fixed z-[80] rounded-lg border border-white/15 bg-[#120a24]/95 px-2.5 py-1.5 text-[11px] text-cyan-100 shadow-lg backdrop-blur"
+                  style={{
+                    left: heatTip.x + 12,
+                    top: heatTip.y + 12,
+                  }}
+                >
+                  {heatTip.text}
+                </div>
+              )}
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <input
                 className="min-w-[200px] flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:border-cyan-400/40"
-                placeholder="搜索 IP / 备注 / 路径"
+                placeholder="搜索 IP / 地区 / 备注 / 路径 / 运营商"
                 value={visitQ}
                 onChange={(e) => setVisitQ(e.target.value)}
               />
@@ -1244,6 +1658,9 @@ export default function AdminPage() {
               </label>
               <span className="self-center text-xs text-gray-500">
                 {filteredVisitors.length} / {visitors.length} 位访客
+                {visitDay && (
+                  <span className="ml-1 text-cyan-400/70">· {visitDay}</span>
+                )}
                 {groupByIp && (
                   <span className="ml-1 text-cyan-400/60">（IP 模式）</span>
                 )}
@@ -1261,7 +1678,7 @@ export default function AdminPage() {
               <table className="min-w-full text-left text-sm">
                 <thead className="border-b border-white/10 text-xs text-gray-500">
                   <tr>
-                    <th className="px-4 py-3">访客 IP</th>
+                    <th className="px-4 py-3">访客 / 地区</th>
                     <th className="px-4 py-3">备注</th>
                     <th className="px-4 py-3">次数</th>
                     <th className="px-4 py-3">最后访问</th>
@@ -1276,14 +1693,12 @@ export default function AdminPage() {
                     const vc = hashColor(v.visitor_id || v.ip_hash);
                     const isOpen = selectedIp === vkey;
                     const recent = isRecent(v.last_at);
-                    const regionText = [
+                    const regionText = formatLocation(
                       v.last_country,
                       v.last_region,
                       v.last_city,
-                      v.last_district,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ");
+                      v.last_district
+                    );
                     return (
                       <Fragment key={vkey}>
                         <tr
@@ -1404,14 +1819,24 @@ export default function AdminPage() {
                                 <div>
                                   <span className="text-gray-500">地区：</span>
                                   <span className="text-gray-300">
-                                    {[
+                                    {formatLocation(
                                       v.last_country,
                                       v.last_region,
                                       v.last_city,
-                                      v.last_district,
-                                    ]
-                                      .filter(Boolean)
-                                      .join(" · ") || "—"}
+                                      v.last_district
+                                    ) || "—"}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">来源：</span>
+                                  <span className="text-gray-300">
+                                    {parseReferrer(v.last_referrer || "")}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">最近页面：</span>
+                                  <span className="text-gray-300">
+                                    {parsePath(v.last_path || "")}
                                   </span>
                                 </div>
                                 <div>
@@ -1589,7 +2014,9 @@ export default function AdminPage() {
                         colSpan={6}
                         className="px-4 py-8 text-center text-gray-500"
                       >
-                        无匹配访客
+                        {visitDay
+                          ? `${visitDay} 无访客记录`
+                          : "无匹配访客"}
                       </td>
                     </tr>
                   )}
@@ -1601,20 +2028,38 @@ export default function AdminPage() {
 
         {tab === "logins" && (
           <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-2 text-xs text-amber-200/80">
-                后台登录审计 · 共 {loginRecords.length} 条记录
+            <div className="admin-card flex flex-wrap items-center justify-between gap-3 p-4">
+              <div>
+                <div className="text-sm text-white">登录审计</div>
+                <p className="text-[11px] text-gray-500">
+                  共 {loginRecords.length} 条 · 筛选后 {filteredLogins.length} 条
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={clearLoginRecords}
-                className="rounded-lg border border-red-400/40 px-3 py-1 text-xs text-red-300"
-              >
-                清空记录
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  className="admin-input min-w-[180px] max-w-xs py-1.5 text-sm"
+                  placeholder="搜索账号 / IP / UA"
+                  value={loginQ}
+                  onChange={(e) => setLoginQ(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => loadLoginRecords()}
+                  className="admin-btn admin-btn-ghost text-xs"
+                >
+                  刷新
+                </button>
+                <button
+                  type="button"
+                  onClick={clearLoginRecords}
+                  className="admin-btn admin-btn-danger text-xs"
+                >
+                  清空记录
+                </button>
+              </div>
             </div>
 
-            <div className="overflow-x-auto rounded-2xl border border-white/10 bg-[#0a0618]">
+            <div className="admin-card overflow-x-auto">
               <table className="min-w-full text-left text-sm">
                 <thead className="border-b border-white/10 text-xs text-gray-500">
                   <tr>
@@ -1626,22 +2071,22 @@ export default function AdminPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {loginRecords.map((r) => (
+                  {filteredLogins.map((r) => (
                     <tr
                       key={r.id}
-                      className="border-b border-white/5 text-gray-300"
+                      className="border-b border-white/5 text-gray-300 transition hover:bg-white/[0.03]"
                     >
-                      <td className="whitespace-nowrap px-4 py-2 text-xs">
+                      <td className="whitespace-nowrap px-4 py-2.5 text-xs">
                         {r.created_at
                           ? new Date(r.created_at).toLocaleString("zh-CN", {
                               hour12: false,
                             })
                           : "—"}
                       </td>
-                      <td className="px-4 py-2 text-cyan-300/80">
+                      <td className="px-4 py-2.5 text-cyan-300/80">
                         {r.username}
                       </td>
-                      <td className="px-4 py-2">
+                      <td className="px-4 py-2.5">
                         <span
                           className={`rounded px-2 py-0.5 text-xs ${
                             r.device === "mobile"
@@ -1652,21 +2097,26 @@ export default function AdminPage() {
                           {r.device || "—"}
                         </span>
                       </td>
-                      <td className="px-4 py-2 font-mono text-xs text-cyan-300/80">
+                      <td className="px-4 py-2.5 font-mono text-xs text-cyan-300/80">
                         {r.ip_hash}
                       </td>
-                      <td className="max-w-[260px] truncate px-4 py-2 text-xs text-gray-500">
+                      <td
+                        className="max-w-[280px] truncate px-4 py-2.5 text-xs text-gray-500"
+                        title={r.ua}
+                      >
                         {r.ua}
                       </td>
                     </tr>
                   ))}
-                  {!loginRecords.length && (
+                  {!filteredLogins.length && (
                     <tr>
                       <td
                         colSpan={5}
-                        className="px-4 py-8 text-center text-gray-500"
+                        className="px-4 py-10 text-center text-gray-500"
                       >
-                        暂无登录记录
+                        {loginRecords.length
+                          ? "无匹配记录"
+                          : "暂无登录记录"}
                       </td>
                     </tr>
                   )}
@@ -1679,68 +2129,83 @@ export default function AdminPage() {
         {tab === "settings" && (
           <form
             onSubmit={saveSettings}
-            className="max-w-xl space-y-5 rounded-2xl border border-white/10 bg-[#0a0618] p-6"
+            className="mx-auto max-w-3xl space-y-5"
           >
-            <h2 className="text-lg text-white">站点设置</h2>
-            <label className="block text-sm text-gray-400">
-              站点标题
-              <input
-                className="mt-1 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-white outline-none focus:border-cyan-400/40"
-                value={siteTitle}
-                onChange={(e) => setSiteTitle(e.target.value)}
-              />
-            </label>
+            <div className="admin-card space-y-4 p-6">
+              <div>
+                <h2 className="text-lg text-white">站点设置</h2>
+                <p className="mt-0.5 text-[11px] text-gray-500">
+                  修改后点底部保存；音乐上传会自动保存
+                </p>
+              </div>
+              <label className="block">
+                <span className="admin-field-label">站点标题</span>
+                <input
+                  className="admin-input"
+                  value={siteTitle}
+                  onChange={(e) => setSiteTitle(e.target.value)}
+                />
+              </label>
+            </div>
 
-            <div className="space-y-3 rounded-xl border border-violet-500/20 bg-violet-500/5 p-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm text-violet-100">背景音乐</h3>
-                <label className="flex items-center gap-2 text-xs text-gray-400">
+            <div className="admin-card space-y-4 p-6">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm text-violet-100">背景音乐</h3>
+                  <p className="text-[11px] text-gray-500">
+                    上传 mp3/wav/ogg/m4a，≤15MB
+                  </p>
+                </div>
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-gray-300">
                   <input
                     type="checkbox"
                     checked={musicEnabled}
                     onChange={(e) => setMusicEnabled(e.target.checked)}
+                    className="accent-cyan-400"
                   />
                   启用播放器
                 </label>
               </div>
 
-              <label className="block text-xs text-gray-500">
-                默认音量 {Math.round(musicVolume * 100)}%
+              <label className="block">
+                <span className="admin-field-label">
+                  默认音量 {Math.round(musicVolume * 100)}%
+                </span>
                 <input
                   type="range"
                   min={0}
                   max={100}
                   value={Math.round(musicVolume * 100)}
                   onChange={(e) => setMusicVolume(Number(e.target.value) / 100)}
-                  className="mt-2 w-full accent-cyan-400"
+                  className="mt-1 w-full accent-cyan-400"
                 />
               </label>
 
               <div className="space-y-2">
                 {musicTracks.length === 0 && (
-                  <p className="text-xs text-gray-600">
-                    暂无自定义曲目，主页会用内置氛围音。上传后优先生效。
+                  <p className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-center text-xs text-gray-600">
+                    暂无自定义曲目，主页会用内置氛围音
                   </p>
                 )}
                 {musicTracks.map((t, i) => (
                   <div
                     key={t.id}
-                    className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/30 px-2 py-2"
+                    className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-2 py-2"
                   >
-                    {/* 封面缩略图 + 上传 */}
-                    <label className="group/cover relative flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-black/40">
+                    <label className="group/cover relative flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-black/40">
                       {t.cover ? (
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img
-                          src={t.cover.startsWith("/uploads/")
-                            ? `${API}${t.cover}`
-                            : t.cover}
+                          src={
+                            t.cover.startsWith("/uploads/")
+                              ? `${API}${t.cover}`
+                              : t.cover
+                          }
                           alt=""
                           className="h-full w-full object-cover"
                         />
                       ) : (
-                        <svg viewBox="0 0 24 24" className="h-4 w-4 fill-gray-600">
-                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2V7zm0 8h2v2h-2v-2z" />
-                        </svg>
+                        <span className="text-[10px] text-gray-600">封面</span>
                       )}
                       <input
                         type="file"
@@ -1753,12 +2218,11 @@ export default function AdminPage() {
                         }}
                       />
                       <span className="absolute inset-0 flex items-center justify-center bg-black/60 text-[9px] text-white opacity-0 transition group-hover/cover:opacity-100">
-                        换封面
+                        换
                       </span>
                     </label>
-                    {/* 标题输入 */}
                     <input
-                      className="min-w-0 flex-1 rounded-md border border-white/10 bg-transparent px-2 py-1 text-sm text-white outline-none"
+                      className="min-w-0 flex-1 rounded-md border border-white/10 bg-transparent px-2 py-1.5 text-sm text-white outline-none focus:border-cyan-400/40"
                       value={t.title}
                       onChange={(e) =>
                         setMusicTracks((prev) =>
@@ -1768,11 +2232,10 @@ export default function AdminPage() {
                         )
                       }
                     />
-                    {/* 删除按钮（同时删后端文件） */}
                     <button
                       type="button"
                       onClick={() => removeTrack(t.id)}
-                      className="rounded-md px-2 py-1 text-xs text-rose-300 hover:bg-rose-500/10"
+                      className="admin-btn admin-btn-danger px-2 py-1 text-xs"
                     >
                       删
                     </button>
@@ -1781,7 +2244,7 @@ export default function AdminPage() {
               </div>
 
               <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-cyan-200/80">
-                <span className="rounded-lg border border-cyan-400/30 px-3 py-2 hover:bg-cyan-500/10">
+                <span className="admin-btn admin-btn-ghost">
                   {musicUploading ? "上传中…" : "上传音乐文件"}
                 </span>
                 <input
@@ -1798,23 +2261,31 @@ export default function AdminPage() {
               </label>
             </div>
 
-            <p className="text-xs text-gray-500">
-              效果开关：流体 / 贪吃蛇 默认开启。保存后刷新主页即可听到新歌单。
-            </p>
-            <button
-              type="submit"
-              className="rounded-xl bg-gradient-to-r from-violet-600 to-cyan-600 px-5 py-2 text-sm text-white"
-            >
-              保存设置
-            </button>
+            <div className="admin-sticky-actions justify-between">
+              <p className="self-center text-[11px] text-gray-500">
+                流体 / 贪吃蛇效果默认开启
+              </p>
+              <button
+                type="submit"
+                className="admin-btn admin-btn-primary px-5 py-2 text-sm"
+              >
+                保存设置
+              </button>
+            </div>
           </form>
         )}
 
         {(tab === "contents" || tab === "messages") && (
-          <div className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">
-            <div className="space-y-4 rounded-2xl border border-white/10 bg-[#0a0618] p-5">
-              {tab === "contents" && (
-                <div className="flex flex-wrap gap-2">
+          <div
+            className={
+              tab === "messages"
+                ? "space-y-4"
+                : "grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]"
+            }
+          >
+            {tab === "contents" && (
+            <div className="admin-card space-y-4 p-5">
+              <div className="sticky top-[4.5rem] z-10 -mx-1 flex flex-wrap gap-2 bg-[#0a0618]/95 px-1 py-2 backdrop-blur">
                   {TYPES.filter((t) => t.key !== "message").map((t) => (
                     <button
                       key={t.key}
@@ -1822,26 +2293,49 @@ export default function AdminPage() {
                       onClick={() => {
                         setType(t.key);
                         setForm(emptyForm());
+                        setContentQ("");
                       }}
-                      className={`rounded-lg border px-3 py-1.5 text-sm ${
+                      className={`rounded-full px-3 py-1.5 text-xs transition ${
                         type === t.key
-                          ? "border-cyan-400/60 text-cyan-200"
-                          : "border-white/10 text-gray-400"
+                          ? "bg-violet-500/25 text-violet-100 ring-1 ring-violet-400/50"
+                          : "bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200"
                       }`}
                     >
                       {t.label}
                     </button>
                   ))}
                 </div>
-              )}
 
               <form onSubmit={save} className="space-y-3">
-                <h2 className="text-lg text-white">
-                  {form.id ? "编辑" : "新增"} ·{" "}
-                  {tab === "messages" ? "留言处理" : title}
-                </h2>
+                <div className="flex items-end justify-between gap-2">
+                  <div>
+                    <h2 className="text-lg text-white">
+                      {form.id ? "编辑" : "新增"} · {title}
+                    </h2>
+                    <p className="text-[11px] text-gray-500">
+                      {form.id ? `正在编辑 #${form.id}` : "填写后点底部保存"}
+                    </p>
+                  </div>
+                  {form.id && (
+                    <button
+                      type="button"
+                      onClick={() => setForm(emptyForm())}
+                      className="admin-btn admin-btn-ghost text-xs"
+                    >
+                      取消编辑
+                    </button>
+                  )}
+                </div>
+                <label className="block">
+                  <span className="admin-field-label">
+                    {type === "internship"
+                      ? "公司名称"
+                      : type === "profile"
+                        ? "姓名"
+                        : "标题"}
+                  </span>
                 <input
-                  className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 outline-none focus:border-cyan-400/40"
+                  className="admin-input"
                   value={form.title}
                   onChange={(e) => setForm({ ...form, title: e.target.value })}
                   placeholder={
@@ -1853,8 +2347,13 @@ export default function AdminPage() {
                   }
                   required
                 />
+                </label>
+                <label className="block">
+                  <span className="admin-field-label">
+                    {type === "internship" ? "时间段 · 职位" : "简介 / 摘要"}
+                  </span>
                 <textarea
-                  className="min-h-[90px] w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 outline-none focus:border-cyan-400/40"
+                  className="admin-input min-h-[90px]"
                   value={form.summary}
                   onChange={(e) =>
                     setForm({ ...form, summary: e.target.value })
@@ -1865,13 +2364,15 @@ export default function AdminPage() {
                       : "简介 / 摘要"
                   }
                 />
-                {(type === "project" || type === "profile" || type === "internship") &&
-                  tab === "contents" && (
+                </label>
+                {(type === "project" || type === "profile" || type === "internship") && (
                   <>
                     {(type === "project" || type === "internship") && (
                       <>
+                    <label className="block">
+                      <span className="admin-field-label">详情</span>
                     <textarea
-                      className="min-h-[80px] w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 outline-none focus:border-cyan-400/40"
+                      className="admin-input min-h-[80px]"
                       value={form.detail}
                       onChange={(e) =>
                         setForm({ ...form, detail: e.target.value })
@@ -1882,8 +2383,11 @@ export default function AdminPage() {
                           : "详情介绍（弹窗长文）"
                       }
                     />
+                    </label>
+                    <label className="block">
+                      <span className="admin-field-label">标签</span>
                     <input
-                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 outline-none focus:border-cyan-400/40"
+                      className="admin-input"
                       value={form.tags}
                       onChange={(e) =>
                         setForm({ ...form, tags: e.target.value })
@@ -1894,21 +2398,29 @@ export default function AdminPage() {
                           : "标签，逗号分隔：Uniapp, Python"
                       }
                     />
+                    </label>
                     {type === "project" && (
+                    <label className="block">
+                      <span className="admin-field-label">链接 JSON</span>
                     <input
-                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 font-mono text-sm outline-none focus:border-cyan-400/40"
+                      className="admin-input font-mono text-sm"
                       value={form.links}
                       onChange={(e) =>
                         setForm({ ...form, links: e.target.value })
                       }
-                      placeholder='链接 JSON：{"github":"...","demo":"..."}'
+                      placeholder='{"github":"...","demo":"..."}'
                     />
+                    </label>
                     )}
                       </>
                     )}
                     {(type === "project" || type === "profile") && (
+                    <label className="block">
+                      <span className="admin-field-label">
+                        {type === "profile" ? "头像 URL" : "封面 URL"}
+                      </span>
                     <input
-                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 outline-none focus:border-cyan-400/40"
+                      className="admin-input"
                       value={form.cover_url}
                       onChange={(e) =>
                         setForm({ ...form, cover_url: e.target.value })
@@ -1919,6 +2431,7 @@ export default function AdminPage() {
                           : "项目封面 URL"
                       }
                     />
+                    </label>
                     )}
                     {form.cover_url && (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -1939,7 +2452,7 @@ export default function AdminPage() {
                       />
                     )}
                     <label className="flex cursor-pointer items-center gap-2 text-xs text-gray-400">
-                      <span className="rounded-lg border border-white/15 px-3 py-2 hover:border-cyan-400/40">
+                      <span className="admin-btn admin-btn-ghost">
                         {uploading
                           ? "上传中…"
                           : type === "profile"
@@ -1959,17 +2472,20 @@ export default function AdminPage() {
                     </label>
                   </>
                 )}
-                {type === "skill" && tab === "contents" && (
+                {type === "skill" && (
                   <>
+                    <label className="block">
+                      <span className="admin-field-label">熟练度 0–100</span>
                     <input
                       type="number"
-                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 outline-none focus:border-cyan-400/40"
+                      className="admin-input"
                       value={form.level}
                       onChange={(e) =>
                         setForm({ ...form, level: Number(e.target.value) })
                       }
                       placeholder="熟练度 0-100"
                     />
+                    </label>
                     <div className="rounded-xl border border-white/10 bg-black/20 p-3">
                       <div className="mb-2 text-xs text-gray-400">
                         关联项目（前台 hover 技能时展示，可多选）
@@ -2002,74 +2518,178 @@ export default function AdminPage() {
                     </div>
                   </>
                 )}
+                <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="admin-field-label">排序（越大越靠前）</span>
                 <input
                   type="number"
-                  className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 outline-none focus:border-cyan-400/40"
+                  className="admin-input"
                   value={form.sort_order}
                   onChange={(e) =>
                     setForm({ ...form, sort_order: Number(e.target.value) })
                   }
                   placeholder="排序"
                 />
-                <label className="flex items-center gap-2 text-sm text-gray-400">
+                </label>
+                <label className="flex items-end gap-2 pb-2 text-sm text-gray-300">
                   <input
                     type="checkbox"
                     checked={form.published}
                     onChange={(e) =>
                       setForm({ ...form, published: e.target.checked })
                     }
+                    className="accent-cyan-400"
                   />
                   发布到前台
                 </label>
-                <div className="flex gap-2">
+                </div>
+                <div className="admin-sticky-actions">
                   <button
                     type="submit"
-                    className="rounded-xl bg-gradient-to-r from-violet-600 to-cyan-600 px-5 py-2 text-sm text-white"
+                    disabled={saving}
+                    className="admin-btn admin-btn-primary px-5 py-2 text-sm"
                   >
-                    保存
+                    {saving ? "保存中…" : form.id ? "保存修改" : "创建并保存"}
                   </button>
                   <button
                     type="button"
                     onClick={() => setForm(emptyForm())}
-                    className="rounded-xl border border-white/10 px-5 py-2 text-sm text-gray-400"
+                    className="admin-btn admin-btn-ghost px-5 py-2 text-sm"
                   >
-                    清空
+                    清空表单
                   </button>
                 </div>
               </form>
             </div>
+            )}
 
-            <div className="rounded-2xl border border-white/10 bg-[#0a0618] p-5">
+            <div className="admin-card p-5">
+              {tab === "messages" && (
+                <div className="mb-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-lg text-white">留言墙</h2>
+                      <p className="text-[11px] text-gray-500">
+                        未回复优先 · 支持批量删除 · 角标显示待回复数
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setComposerOpen((v) => !v)}
+                      className="admin-btn admin-btn-ghost text-xs"
+                    >
+                      {composerOpen ? "收起发帖" : "以博主身份发帖"}
+                    </button>
+                  </div>
+                  {composerOpen && (
+                    <form
+                      onSubmit={save}
+                      className="space-y-2 rounded-xl border border-purple-400/25 bg-purple-500/5 p-3"
+                    >
+                      <input
+                        className="admin-input"
+                        value={form.title}
+                        onChange={(e) =>
+                          setForm({ ...form, title: e.target.value })
+                        }
+                        placeholder="昵称（显示为博主）"
+                        required
+                      />
+                      <textarea
+                        className="admin-input min-h-[70px]"
+                        value={form.summary}
+                        onChange={(e) =>
+                          setForm({ ...form, summary: e.target.value })
+                        }
+                        placeholder="留言内容"
+                        required
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          type="submit"
+                          disabled={saving}
+                          className="admin-btn admin-btn-primary text-xs"
+                          onClick={() => {
+                            // force message type via tab already messages
+                          }}
+                        >
+                          {saving ? "发布中…" : "发布"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setForm(emptyForm());
+                            setComposerOpen(false);
+                          }}
+                          className="admin-btn admin-btn-ghost text-xs"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+              )}
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-lg text-white">列表</h2>
-                {tab === "messages" && (
+                {tab === "contents" && (
+                  <h2 className="text-lg text-white">内容列表</h2>
+                )}
+                {tab === "contents" && (
                   <div className="flex flex-wrap items-center gap-2">
                     <input
-                      className="min-w-[140px] flex-1 rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-sm outline-none focus:border-cyan-400/40"
+                      className="admin-input min-w-[160px] py-1.5 text-sm"
+                      placeholder="搜索标题 / 摘要 / ID"
+                      value={contentQ}
+                      onChange={(e) => setContentQ(e.target.value)}
+                    />
+                    <span className="text-xs text-gray-500">
+                      {filteredContents.length} / {items.length}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForm(emptyForm());
+                        window.scrollTo({ top: 0, behavior: "smooth" });
+                      }}
+                      className="admin-btn admin-btn-ghost text-xs"
+                    >
+                      + 新建
+                    </button>
+                  </div>
+                )}
+                {tab === "messages" && (
+                  <div className="flex w-full flex-wrap items-center gap-2">
+                    <input
+                      className="admin-input min-w-[140px] flex-1 py-1.5 text-sm"
                       placeholder="搜索留言…"
                       value={msgSearch}
                       onChange={(e) => setMsgSearch(e.target.value)}
                     />
                     <select
-                      className="rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-sm outline-none"
+                      className="admin-input w-auto py-1.5 text-sm"
                       value={msgSort}
                       onChange={(e) =>
                         setMsgSort(e.target.value as "newest" | "oldest" | "unreplied")
                       }
                     >
+                      <option value="unreplied">未回复优先</option>
                       <option value="newest">最新优先</option>
                       <option value="oldest">最早优先</option>
-                      <option value="unreplied">未回复优先</option>
                     </select>
                     <span className="text-xs text-gray-500">
                       {sortedMessages.length} 条
+                      {msgBadge > 0 && (
+                        <span className="ml-1 text-rose-300">
+                          · {msgBadge} 待回复
+                        </span>
+                      )}
                     </span>
                     {selectedIds.size > 0 && (
                       <button
                         type="button"
                         onClick={batchDelete}
                         disabled={batchDeleting}
-                        className="rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-1.5 text-xs text-red-300 transition hover:bg-red-500/20 disabled:opacity-50"
+                        className="admin-btn admin-btn-danger text-xs"
                       >
                         {batchDeleting
                           ? "删除中…"
@@ -2101,7 +2721,7 @@ export default function AdminPage() {
                     )}
                   </div>
                 )}
-                {(tab === "messages" ? pagedMessages : items).map((item) => {
+                {(tab === "messages" ? pagedMessages : filteredContents).map((item) => {
                   const body = item.body as {
                     reply_to?: number;
                     is_admin?: boolean;
@@ -2115,14 +2735,40 @@ export default function AdminPage() {
                               ?.reply_to === item.id
                         )
                       : [];
+                  const unreplied =
+                    tab === "messages" &&
+                    !body?.reply_to &&
+                    !body?.is_admin &&
+                    replies.length === 0;
+                  const coverSrc = item.cover_url
+                    ? item.cover_url.startsWith("http")
+                      ? item.cover_url
+                      : item.cover_url.startsWith("/uploads")
+                        ? `${API}${item.cover_url}`
+                        : item.cover_url
+                    : "";
                   return (
                   <div
                     key={item.id}
-                    className={`rounded-xl border p-4 ${
+                    className={`rounded-xl border p-4 transition ${
                       body?.is_admin
                         ? "border-purple-500/30 bg-purple-500/5"
+                        : unreplied
+                          ? "border-rose-400/25 bg-rose-500/[0.04]"
                         : "border-white/10 bg-black/30"
-                    } ${selectedIds.has(item.id) ? "ring-1 ring-cyan-400/30" : ""}`}
+                    } ${selectedIds.has(item.id) ? "ring-1 ring-cyan-400/30" : ""} ${
+                      form.id === item.id && tab === "contents"
+                        ? "ring-1 ring-violet-400/40"
+                        : ""
+                    } ${tab === "contents" ? "cursor-pointer hover:border-white/20" : ""}`}
+                    onClick={
+                      tab === "contents"
+                        ? () => {
+                            edit(item);
+                            window.scrollTo({ top: 0, behavior: "smooth" });
+                          }
+                        : undefined
+                    }
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex min-w-0 flex-1 items-start gap-3">
@@ -2134,14 +2780,38 @@ export default function AdminPage() {
                             className="mt-1 h-4 w-4 shrink-0 cursor-pointer rounded border-white/20 bg-black/40 accent-cyan-500"
                           />
                         )}
+                        {tab === "contents" && coverSrc && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={coverSrc}
+                            alt=""
+                            className="h-12 w-12 shrink-0 rounded-lg object-cover ring-1 ring-white/10"
+                          />
+                        )}
                         <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="font-medium text-white">
                             {item.title || "(无标题)"}
                           </span>
                           {body?.is_admin && (
                             <span className="rounded bg-purple-500/20 px-1.5 py-0.5 text-[10px] text-purple-300">
                               博主
+                            </span>
+                          )}
+                          {unreplied && (
+                            <span className="rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] text-rose-300">
+                              待回复
+                            </span>
+                          )}
+                          {tab === "contents" && (
+                            <span
+                              className={`rounded px-1.5 py-0.5 text-[10px] ${
+                                item.published
+                                  ? "bg-emerald-500/15 text-emerald-300"
+                                  : "bg-white/10 text-gray-400"
+                              }`}
+                            >
+                              {item.published ? "已发布" : "草稿"}
                             </span>
                           )}
                           {tab === "messages" && item.created_at && (
@@ -2156,10 +2826,7 @@ export default function AdminPage() {
                         <div className="mt-2 text-[11px] text-gray-500">
                           #{item.id}
                           {tab !== "messages" && (
-                            <>
-                              {" "}· sort {item.sort_order} ·{" "}
-                              {item.published ? "已发布" : "草稿"}
-                            </>
+                            <> · sort {item.sort_order}</>
                           )}
                           {item.type === "skill" &&
                           typeof item.level === "number" &&
@@ -2183,22 +2850,30 @@ export default function AdminPage() {
                               );
                               setReplyText("");
                             }}
-                            className="rounded-lg border border-purple-400/30 px-2 py-1 text-xs text-purple-200"
+                            className="admin-btn admin-btn-ghost text-xs"
                           >
-                            回复
+                            {replyingTo === item.id ? "取消" : "回复"}
                           </button>
                         )}
+                        {tab === "contents" && (
                         <button
                           type="button"
-                          onClick={() => edit(item)}
-                          className="rounded-lg border border-cyan-400/30 px-2 py-1 text-xs text-cyan-200"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            edit(item);
+                          }}
+                          className="admin-btn admin-btn-ghost text-xs"
                         >
                           编辑
                         </button>
+                        )}
                         <button
                           type="button"
-                          onClick={() => remove(item.id)}
-                          className="rounded-lg border border-red-400/30 px-2 py-1 text-xs text-red-300"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            remove(item.id);
+                          }}
+                          className="admin-btn admin-btn-danger text-xs"
                         >
                           删除
                         </button>
@@ -2231,12 +2906,19 @@ export default function AdminPage() {
                           value={replyText}
                           onChange={(e) => setReplyText(e.target.value)}
                           placeholder="以博主身份回复…"
-                          className="min-w-0 flex-1 rounded-lg border border-purple-400/30 bg-black/40 px-3 py-1.5 text-sm text-white outline-none focus:border-purple-400/60"
+                          className="admin-input min-w-0 flex-1 py-1.5 text-sm"
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              submitReply(item.id);
+                            }
+                          }}
                         />
                         <button
                           type="button"
                           onClick={() => submitReply(item.id)}
-                          className="rounded-lg bg-gradient-to-r from-purple-600 to-cyan-600 px-3 py-1.5 text-xs text-white"
+                          className="admin-btn admin-btn-primary text-xs"
                         >
                           发送
                         </button>
@@ -2247,9 +2929,13 @@ export default function AdminPage() {
                 })}
                 {(tab === "messages"
                   ? sortedMessages.length === 0
-                  : items.length === 0) && (
-                  <p className="py-8 text-center text-sm text-gray-500">
-                    暂无数据
+                  : filteredContents.length === 0) && (
+                  <p className="py-10 text-center text-sm text-gray-500">
+                    {tab === "contents" && contentQ
+                      ? "无匹配内容"
+                      : tab === "messages" && msgSearch
+                        ? "无匹配留言"
+                        : "暂无数据"}
                   </p>
                 )}
                 {/* 留言分页 */}

@@ -38,10 +38,11 @@ export const Navbar = () => {
           <Image
             src="/logo.png"
             alt="Logo"
-            width={70}
-            height={70}
+            width={48}
+            height={48}
+            priority
             draggable={false}
-            className="cursor-pointer"
+            className="cursor-pointer rounded-full bg-[#030014] ring-1 ring-white/10"
           />
           <div className="ml-[10px] hidden font-bold text-gray-300 md:flex">
             个人技术博客 · 邓锦鑫

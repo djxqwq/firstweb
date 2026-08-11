@@ -37,6 +37,7 @@ from sqlalchemy import (
     create_engine,
     func,
     inspect as sqlalchemy_inspect,
+    literal_column,
     select,
     text as sqlalchemy_text,
 )
@@ -969,23 +970,19 @@ _GEO_CACHE_TTL = 3600  # 1 小时
 def lookup_ip_geo(ip: str) -> dict:
     """查询 IP 地理位置。
 
-    策略（四源融合）：
-    1. ip-api.com — 全球覆盖，中文语言，但中国城市级数据不准确（如把杭州标成"南市"）
-    2. pconline（太平洋电脑网）— 中国 IP 专用，城市级数据准确，但区县经常为空
-       注意：必须用 HTTPS，HTTP 会返回 403
-    3. ipinfo.io — 第三方补充，有时有不同精度的数据
-    4. Nominatim 逆地理编码 — 用 ip-api.com 返回的经纬度反查区县（免费、无需 key）
+    策略（中国云厂商 IP 常被国内库标成北京总部，优先信任 ip-api 节点位置）：
+    1. ip-api.com — 城市/省份主源（对腾讯云等 CDN 节点更准）
+    2. pconline — 仅补全空字段 / ISP，不覆盖已有准确城市
+    3. ipinfo.io — 英文城市补充（仅当城市仍空）
+    4. Nominatim — 区县补充
 
-    本地/内网 IP 直接返回空字典，不发起外网请求。
-    结果缓存 1 小时，避免对同一 IP 重复请求。
+    本地/内网 IP 直接返回空字典。结果缓存 1 小时。
     """
     if not ip or ip in ("127.0.0.1", "localhost", "::1", ""):
         return {}
-    # 内网网段不查询
     if ip.startswith(("10.", "172.", "192.168.", "169.254.")):
         return {}
 
-    # 缓存命中
     now = time.time()
     cached = _geo_cache.get(ip)
     if cached and now - cached[0] < _GEO_CACHE_TTL:
@@ -993,35 +990,42 @@ def lookup_ip_geo(ip: str) -> dict:
 
     result: dict = {}
 
-    # 1. ip-api.com（全球覆盖，中文语言）— 同时获取经纬度用于后续逆地理编码
+    # 1. ip-api.com — 主源
     try:
         url = (
             f"http://ip-api.com/json/{ip}"
-            "?lang=zh-CN&fields=status,country,regionName,city,district,isp,query,lat,lon"
+            "?lang=zh-CN&fields=status,country,regionName,city,district,isp,org,query,lat,lon"
         )
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         if data.get("status") == "success":
-            city = data.get("city", "")
-            # 过滤已知的错误城市名
+            city = data.get("city", "") or ""
             if city in _BAD_CITY_NAMES:
                 city = ""
+            # 去掉常见后缀方便展示
+            if city.endswith("市") and len(city) > 2:
+                city = city[:-1]
+            region = data.get("regionName", "") or ""
+            if region.endswith("省") and len(region) > 2:
+                region = region[:-1]
             result = {
                 "country": data.get("country", ""),
-                "region": data.get("regionName", ""),
+                "region": region,
                 "city": city,
-                "district": data.get("district", ""),
-                "isp": data.get("isp", ""),
+                "district": data.get("district", "") or "",
+                "isp": data.get("isp", "") or data.get("org", "") or "",
                 "_lat": data.get("lat"),
                 "_lon": data.get("lon"),
             }
     except Exception:
         pass
 
-    # 2. 中国 IP 用太平洋电脑网 API 补查更准确的城市和区县
-    #    必须用 HTTPS，HTTP 会返回 403 Forbidden
-    if result.get("country") and ("中国" in result["country"] or "China" in result["country"]):
+    # 2. pconline — 只补空，不覆盖（腾讯云等常被错标北京）
+    is_cn = bool(result.get("country")) and (
+        "中国" in result["country"] or "China" in result["country"]
+    )
+    if is_cn or not result:
         try:
             url2 = f"https://whois.pconline.com.cn/ipJson.jsp?ip={ip}&json=true"
             req2 = urllib.request.Request(
@@ -1034,53 +1038,57 @@ def lookup_ip_geo(ip: str) -> dict:
                 raw = resp2.read().decode("gbk", errors="ignore")
             data2 = json.loads(raw)
             if data2 and not data2.get("err"):
-                pro = data2.get("pro", "")  # 省份，如"浙江省"
-                city = data2.get("city", "")  # 城市，如"杭州市"
-                region2 = data2.get("region", "")  # 区/县，如"西湖区"
-                addr = data2.get("addr", "")  # 详细地址，如"浙江省杭州市西湖区联通"
-                # pconline 的城市数据更准确，覆盖 ip-api.com 的结果
-                if city:
-                    result["city"] = (
-                        city.rstrip("市")
-                        if city.endswith("市") and len(city) > 2
-                        else city
-                    )
-                if pro:
-                    result["region"] = (
-                        pro.rstrip("省")
-                        if pro.endswith("省") and len(pro) > 2
-                        else pro
-                    )
-                # 区/县信息
-                if region2:
+                pro = (data2.get("pro") or "").strip()
+                city2 = (data2.get("city") or "").strip()
+                region2 = (data2.get("region") or "").strip()
+                addr = data2.get("addr") or ""
+                if city2.endswith("市") and len(city2) > 2:
+                    city2 = city2[:-1]
+                if pro.endswith("省") and len(pro) > 2:
+                    pro = pro[:-1]
+                if pro.endswith("市") and len(pro) > 2:
+                    # 直辖市
+                    pass
+
+                # 仅当主源缺失时才用 pconline 的省市
+                if not result.get("city") and city2:
+                    result["city"] = city2
+                if not result.get("region") and pro:
+                    result["region"] = pro
+                if not result.get("country"):
+                    result["country"] = "中国"
+
+                if region2 and not result.get("district"):
                     result["district"] = region2
-                # 如果 region 为空，尝试从 addr 中提取区县
                 if not result.get("district") and addr:
                     addr_clean = addr
-                    if pro:
-                        addr_clean = addr_clean.replace(pro, "")
-                    if city:
-                        addr_clean = addr_clean.replace(city, "")
-                    for sp in ("联通", "电信", "移动", "铁通", "长城", "广电", "教育网"):
+                    for part in (pro, city2, result.get("city", ""), result.get("region", "")):
+                        if part:
+                            addr_clean = addr_clean.replace(part, "")
+                            addr_clean = addr_clean.replace(part + "市", "")
+                            addr_clean = addr_clean.replace(part + "省", "")
+                    for sp in ("联通", "电信", "移动", "铁通", "长城", "广电", "教育网", "腾讯", "阿里", "华为"):
                         addr_clean = addr_clean.replace(sp, "")
                     addr_clean = addr_clean.strip()
-                    if addr_clean and 2 <= len(addr_clean) <= 6 and (
-                        "区" in addr_clean or "县" in addr_clean
-                        or "市" in addr_clean or "旗" in addr_clean
+                    if addr_clean and 2 <= len(addr_clean) <= 8 and (
+                        "区" in addr_clean
+                        or "县" in addr_clean
+                        or "旗" in addr_clean
                     ):
                         result["district"] = addr_clean
-                # 如果 addr 有 ISP 信息且 ip-api 没返回 ISP，用 addr 补充
+
                 if not result.get("isp") and addr:
-                    # addr 格式如 "浙江省杭州市联通"，提取运营商
                     for sp in ("联通", "电信", "移动", "铁通", "长城", "广电"):
                         if sp in addr:
                             result["isp"] = f"中国{sp}"
                             break
+                    if not result.get("isp") and "腾讯" in addr:
+                        result["isp"] = "腾讯云"
         except Exception:
             pass
 
-    # 3. ipinfo.io 补充 — 如果区县仍为空，尝试获取更精确的位置
-    if result.get("country") and not result.get("district"):
+    # 3. ipinfo — 仅补空城市
+    if result.get("country") and not result.get("city"):
         try:
             url3 = f"https://ipinfo.io/{ip}/json"
             req3 = urllib.request.Request(
@@ -1088,74 +1096,45 @@ def lookup_ip_geo(ip: str) -> dict:
             )
             with urllib.request.urlopen(req3, timeout=5) as resp3:
                 data3 = json.loads(resp3.read().decode("utf-8"))
-            if data3 and not data3.get("error"):
-                # ipinfo.io 的 region 字段有时是中文区县名
-                # 但主要返回英文，我们只取 postal code 对应的信息不可靠
-                # 如果之前没有城市数据，用 ipinfo 的 city
-                if not result.get("city") and data3.get("city"):
-                    # ipinfo 返回英文城市名，简单映射常见中国城市
-                    en_city = data3.get("city", "")
-                    _EN_CITY_MAP = {
-                        "Hangzhou": "杭州",
-                        "Beijing": "北京",
-                        "Shanghai": "上海",
-                        "Shenzhen": "深圳",
-                        "Guangzhou": "广州",
-                        "Jiaxing": "嘉兴",
-                        "Ningbo": "宁波",
-                        "Wenzhou": "温州",
-                        "Nanjing": "南京",
-                        "Suzhou": "苏州",
-                        "Chengdu": "成都",
-                        "Wuhan": "武汉",
-                        "Xian": "西安",
-                        "Chongqing": "重庆",
-                        "Tianjin": "天津",
-                        "Qingdao": "青岛",
-                        "Dalian": "大连",
-                        "Xiamen": "厦门",
-                        "Fuzhou": "福州",
-                        "Jinan": "济南",
-                        "Zhengzhou": "郑州",
-                        "Changsha": "长沙",
-                        "Hefei": "合肥",
-                        "Nanchang": "南昌",
-                        "Shenyang": "沈阳",
-                        "Harbin": "哈尔滨",
-                        "Changchun": "长春",
-                        "Kunming": "昆明",
-                        "Guiyang": "贵阳",
-                        "Lanzhou": "兰州",
-                        "Taiyuan": "太原",
-                        "Shijiazhuang": "石家庄",
-                        "Hohhot": "呼和浩特",
-                        "Urumqi": "乌鲁木齐",
-                        "Lhasa": "拉萨",
-                        "Yinchuan": "银川",
-                        "Xining": "西宁",
-                        "Haikou": "海口",
-                        "Nanning": "南宁",
-                        "Guilin": "桂林",
-                    }
-                    result["city"] = _EN_CITY_MAP.get(en_city, en_city)
-                # 补充 ISP
+            if data3 and not data3.get("error") and data3.get("city"):
+                en_city = data3.get("city", "")
+                _EN_CITY_MAP = {
+                    "Hangzhou": "杭州",
+                    "Beijing": "北京",
+                    "Shanghai": "上海",
+                    "Shenzhen": "深圳",
+                    "Guangzhou": "广州",
+                    "Jiaxing": "嘉兴",
+                    "Ningbo": "宁波",
+                    "Wenzhou": "温州",
+                    "Nanjing": "南京",
+                    "Suzhou": "苏州",
+                    "Chengdu": "成都",
+                    "Wuhan": "武汉",
+                    "Chongqing": "重庆",
+                    "Tianjin": "天津",
+                    "Xiamen": "厦门",
+                    "Fuzhou": "福州",
+                    "Changsha": "长沙",
+                    "Dongguan": "东莞",
+                    "Foshan": "佛山",
+                }
+                result["city"] = _EN_CITY_MAP.get(en_city, en_city)
                 if not result.get("isp") and data3.get("org"):
                     org = data3.get("org", "")
-                    for sp in ("China Telecom", "China Unicom", "China Mobile"):
+                    for sp, cn in (
+                        ("China Telecom", "中国电信"),
+                        ("China Unicom", "中国联通"),
+                        ("China Mobile", "中国移动"),
+                        ("Tencent", "腾讯云"),
+                    ):
                         if sp in org:
-                            cn_map = {
-                                "China Telecom": "中国电信",
-                                "China Unicom": "中国联通",
-                                "China Mobile": "中国移动",
-                            }
-                            result["isp"] = cn_map[sp]
+                            result["isp"] = cn
                             break
         except Exception:
             pass
 
-    # 4. Nominatim 逆地理编码 — 如果区县仍为空，用 ip-api.com 的经纬度反查
-    #    Nominatim (OpenStreetMap) 免费且无需 API key，对中国数据覆盖良好
-    #    其 address.city 字段在中国常返回区县名（如"西湖区"）
+    # 4. Nominatim 区县
     if result.get("country") and not result.get("district") and result.get("_lat"):
         try:
             lat = result["_lat"]
@@ -1171,25 +1150,25 @@ def lookup_ip_geo(ip: str) -> dict:
             with urllib.request.urlopen(req4, timeout=5) as resp4:
                 data4 = json.loads(resp4.read().decode("utf-8"))
             addr4 = data4.get("address", {})
-            # Nominatim 在中国数据中，city 字段通常返回区县名（如"西湖区"）
             district_candidate = (
-                addr4.get("city", "")
-                or addr4.get("county", "")
+                addr4.get("suburb", "")
                 or addr4.get("borough", "")
-                or addr4.get("suburb", "")
+                or addr4.get("county", "")
+                or addr4.get("city_district", "")
             )
-            if district_candidate and len(district_candidate) <= 10:
+            # 避免把「广州市」再当区县
+            if (
+                district_candidate
+                and len(district_candidate) <= 10
+                and district_candidate not in (result.get("city"), result.get("region"))
+            ):
                 result["district"] = district_candidate
         except Exception:
             pass
 
-    # 清理内部字段，不返回给调用方
     result.pop("_lat", None)
     result.pop("_lon", None)
-
-    # 写入缓存
     _geo_cache[ip] = (now, result.copy())
-
     return result
 
 
@@ -1247,23 +1226,60 @@ def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)
     path = payload.path[:255]
     visitor_id = (payload.visitor_id or "").strip()[:64]
 
-    # 计算浏览器指纹哈希（不含 IP，这样换 VPN/IP 时仍能识别同一人）
-    # 指纹 = UA + 屏幕分辨率 + 色深 + 时区 + 语言 + CPU核心数
-    fp_raw = payload.fingerprint or ua
-    fingerprint_hash = hashlib.sha256(fp_raw.encode()).hexdigest()[:16]
+    # 计算浏览器指纹哈希（不含 IP，这样换 VPN/IP 时仍能辅助识别）
+    fp_raw = (payload.fingerprint or ua).strip()
+    fingerprint_hash = (
+        hashlib.sha256(fp_raw.encode()).hexdigest()[:16] if fp_raw else ""
+    )
 
-    # 指纹兜底：如果本次带了 visitor_id，但之前同 IP+指纹的访问用的是另一个 visitor_id，
-    # 说明用户的 localStorage/Cookie 被清了又重新生成，沿用旧 visitor_id 保持聚合一致
-    if visitor_id:
+    # 访客 ID 持久化策略：
+    # 1) 前端 localStorage + Cookie 双写 UUID（主）
+    # 2) 若 UUID 丢失/重生：同 IP + 同指纹 → 收回旧 ID（同设备同网络）
+    # 3) 跨 IP：同指纹且 14 天内有访问 → 收回旧 ID（同设备换网络）
+    # 避免「仅指纹全局匹配」误把两台同型号电脑合并成一人
+    if visitor_id and fingerprint_hash:
         existing = db.scalar(
-            select(Visit.visitor_id).where(
+            select(Visit.visitor_id)
+            .where(
                 Visit.fingerprint_hash == fingerprint_hash,
+                Visit.ip_hash == ip_hash,
                 Visit.visitor_id != "",
                 Visit.visitor_id != visitor_id,
-            ).order_by(Visit.id.desc()).limit(1)
+            )
+            .order_by(Visit.id.desc())
+            .limit(1)
         )
         if existing:
-            visitor_id = existing  # 沿用旧 ID
+            visitor_id = existing
+        else:
+            recent = datetime.now(timezone.utc) - timedelta(days=14)
+            existing2 = db.scalar(
+                select(Visit.visitor_id)
+                .where(
+                    Visit.fingerprint_hash == fingerprint_hash,
+                    Visit.visitor_id != "",
+                    Visit.visitor_id != visitor_id,
+                    Visit.created_at >= recent,
+                )
+                .order_by(Visit.id.desc())
+                .limit(1)
+            )
+            if existing2:
+                visitor_id = existing2
+    elif not visitor_id and fingerprint_hash:
+        # 前端没带 ID：尽量用同 IP+指纹找回
+        recovered = db.scalar(
+            select(Visit.visitor_id)
+            .where(
+                Visit.fingerprint_hash == fingerprint_hash,
+                Visit.ip_hash == ip_hash,
+                Visit.visitor_id != "",
+            )
+            .order_by(Visit.id.desc())
+            .limit(1)
+        )
+        if recovered:
+            visitor_id = recovered
 
     # 去重：同一 visitor_id（或回退到 ip_hash）+ 同路径在窗口内已记录过则跳过
     dedup_key = visitor_id or ip_hash
@@ -1301,46 +1317,73 @@ def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)
         )
     )
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "visitor_id": visitor_id}
+
+def _visit_day_expr():
+    """日历日（Asia/Shanghai）。created_at 按 UTC naive 存储。"""
+    if DATABASE_URL.startswith("sqlite"):
+        return func.date(
+            func.datetime(Visit.created_at, literal_column("'+8 hours'"))
+        )
+    # MySQL / TiDB
+    return func.date(func.convert_tz(Visit.created_at, "+00:00", "+08:00"))
+
+
+def _today_shanghai() -> str:
+    return datetime.now(timezone.utc).astimezone(
+        timezone(timedelta(hours=8))
+    ).date().isoformat()
 
 
 @app.get("/api/visits/stats")
-def visit_stats(db: Session = Depends(get_db)):
+def visit_stats(days: int = 180, db: Session = Depends(get_db)):
     # 总数统计不加 deleted 过滤 → 删除记录不影响历史累计总数
+    days = min(max(int(days or 180), 1), 730)
     total = db.scalar(select(func.count()).select_from(Visit)) or 0
     unique = db.scalar(
         select(func.count(func.distinct(Visit.visitor_id))).where(
             Visit.visitor_id != ""
         )
     ) or 0
+    day_col = _visit_day_expr()
+    # 热力图按「未软删除」计，与按日筛选列表一致；unique = 当天独立访客数
+    identity = func.coalesce(
+        func.nullif(Visit.visitor_id, ""),
+        Visit.ip_hash,
+    )
     rows = db.execute(
-        select(func.date(Visit.created_at), func.count())
-        .group_by(func.date(Visit.created_at))
-        .order_by(func.date(Visit.created_at).desc())
-        .limit(7)
+        select(day_col, func.count(), func.count(func.distinct(identity)))
+        .where(Visit.deleted.is_(False))
+        .group_by(day_col)
+        .order_by(day_col.desc())
+        .limit(days)
     ).all()
-    days = [{"day": str(d), "count": c} for d, c in reversed(rows)]
+    day_list = [
+        {"day": str(d), "count": int(c or 0), "unique": int(u or 0)}
+        for d, c, u in reversed(rows)
+        if d is not None
+    ]
     device_rows = db.execute(
-        select(Visit.device, func.count()).group_by(Visit.device)
+        select(Visit.device, func.count())
+        .where(Visit.deleted.is_(False))
+        .group_by(Visit.device)
     ).all()
-    devices = {
-        (d or "unknown"): c for d, c in device_rows
-    }
-    today = datetime.now(timezone.utc).date().isoformat()
+    devices = {(d or "unknown"): c for d, c in device_rows}
+    today = _today_shanghai()
     today_count = 0
-    for d in days:
-        if d["day"] == today or d["day"].startswith(today):
+    today_unique = 0
+    for d in day_list:
+        key = str(d["day"])[:10]
+        if key == today:
             today_count = d["count"]
+            today_unique = d["unique"]
             break
-    # sqlite date() may return date object string differently
-    if today_count == 0 and days:
-        # try match last day if it's today locally
-        pass
     return {
         "total": total,
         "unique": unique,
         "today": today_count,
-        "days": days,
+        "today_unique": today_unique,
+        "days": day_list,
         "devices": devices,
     }
 
@@ -1646,6 +1689,7 @@ def admin_visits(
 @app.get("/api/admin/visitors")
 def admin_visitors(
     group_by: str = "visitor_id",
+    day: str | None = None,
     db: Session = Depends(get_db),
     _: Admin = Depends(get_current_admin),
 ):
@@ -1654,16 +1698,22 @@ def admin_visitors(
     group_by=visitor_id（默认）：按浏览器 visitor_id 聚合，同一人即使 IP 变了也归为一条。
     group_by=ip：按 IP 聚合，同一 IP 下不同浏览器/设备也合并为一条，
                  适合「同一台电脑换了浏览器却被当成两个人」的场景。
+    day=YYYY-MM-DD：只聚合该日（Asia/Shanghai）有访问的访客。
 
     只统计未被软删除的记录；返回最新一条记录的完整访客信息。
     总访问数请看 /api/visits/stats（不受软删除影响）。
     """
-    rows = db.scalars(
-        select(Visit)
-        .where(Visit.deleted.is_(False))
-        .order_by(Visit.id.desc())
-        .limit(5000)
-    ).all()
+    q = select(Visit).where(Visit.deleted.is_(False))
+    if day:
+        day = day.strip()[:10]
+        # 简单校验 YYYY-MM-DD
+        try:
+            datetime.strptime(day, "%Y-%m-%d")
+        except ValueError:
+            day = None
+        if day:
+            q = q.where(_visit_day_expr() == day)
+    rows = db.scalars(q.order_by(Visit.id.desc()).limit(5000)).all()
     notes = {n.visitor_id: n.note for n in db.scalars(select(VisitorNote)).all()}
     agg: dict[str, dict] = {}
     for r in rows:

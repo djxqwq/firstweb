@@ -185,20 +185,25 @@ export function getVisitorId(): string {
 }
 
 /**
- * 生成轻量浏览器指纹（UA + 屏幕 + 时区 + 语言）。
- * 不做强唯一标识，仅作为后端兜底：当 visitor_id 丢失时，
- * 后端可用 IP + 此指纹辅助判断是否同一人。
+ * 生成轻量浏览器指纹。主识别靠 visitor_id；指纹仅作丢失后的兜底。
  */
 export function getFingerprint(): string {
   if (typeof window === "undefined") return "";
   try {
+    const nav = navigator as Navigator & {
+      userAgentData?: { platform?: string };
+    };
     const parts = [
       navigator.userAgent,
       String(screen.width || 0) + "x" + String(screen.height || 0),
+      String(window.devicePixelRatio || 1),
       String(screen.colorDepth || 0),
       Intl.DateTimeFormat().resolvedOptions().timeZone || "",
       navigator.language || "",
+      (navigator.languages || []).slice(0, 3).join(","),
       String(navigator.hardwareConcurrency || 0),
+      String(navigator.maxTouchPoints || 0),
+      nav.userAgentData?.platform || navigator.platform || "",
     ];
     return parts.join("|");
   } catch {
