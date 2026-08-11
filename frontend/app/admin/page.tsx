@@ -279,6 +279,8 @@ export default function AdminPage() {
   const [msgSearch, setMsgSearch] = useState("");
   const [msgPage, setMsgPage] = useState(1);
   const [msgPageSize] = useState(10);
+  const [visitPage, setVisitPage] = useState(1);
+  const [visitPageSize] = useState(10);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [groupByIp, setGroupByIp] = useState(false);
@@ -741,6 +743,24 @@ export default function AdminPage() {
       );
     });
   }, [visitors, visitQ, visitDevice]);
+
+  const visitTotalPages = Math.max(
+    1,
+    Math.ceil(filteredVisitors.length / visitPageSize)
+  );
+  const pagedVisitors = useMemo(() => {
+    const page = Math.min(visitPage, visitTotalPages);
+    const start = (page - 1) * visitPageSize;
+    return filteredVisitors.slice(start, start + visitPageSize);
+  }, [filteredVisitors, visitPage, visitPageSize, visitTotalPages]);
+
+  useEffect(() => {
+    setVisitPage(1);
+  }, [visitQ, visitDevice, visitDay, groupByIp]);
+
+  useEffect(() => {
+    if (visitPage > visitTotalPages) setVisitPage(visitTotalPages);
+  }, [visitPage, visitTotalPages]);
 
   const filteredContents = useMemo(() => {
     if (!contentQ.trim()) return items;
@@ -1790,6 +1810,12 @@ export default function AdminPage() {
               </label>
               <span className="self-center text-xs text-gray-500">
                 {filteredVisitors.length} / {visitors.length} 位访客
+                {filteredVisitors.length > 0 && (
+                  <span className="ml-1 text-gray-600">
+                    · 第 {Math.min(visitPage, visitTotalPages)}/{visitTotalPages}{" "}
+                    页
+                  </span>
+                )}
                 {visitDay && (
                   <span className="ml-1 text-cyan-400/70">· {visitDay}</span>
                 )}
@@ -1819,7 +1845,7 @@ export default function AdminPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredVisitors.map((v) => {
+                  {pagedVisitors.map((v) => {
                     // 与后端聚合 key 对齐（含按 IP 合并模式）
                     const vkey = visitorAggKey(v);
                     const vc = hashColor(v.visitor_id || v.ip_hash || v.last_ip);
@@ -2140,7 +2166,7 @@ export default function AdminPage() {
                       </Fragment>
                     );
                   })}
-                  {!filteredVisitors.length && (
+                  {!pagedVisitors.length && (
                     <tr>
                       <td
                         colSpan={6}
@@ -2155,6 +2181,54 @@ export default function AdminPage() {
                 </tbody>
               </table>
             </div>
+
+            {visitTotalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setVisitPage((p) => Math.max(1, p - 1))}
+                  disabled={visitPage <= 1}
+                  className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-gray-300 disabled:opacity-30"
+                >
+                  上一页
+                </button>
+                {Array.from({ length: visitTotalPages }, (_, i) => i + 1)
+                  .filter(
+                    (p) =>
+                      p === 1 ||
+                      p === visitTotalPages ||
+                      Math.abs(p - visitPage) <= 1
+                  )
+                  .map((p, idx, arr) => (
+                    <span key={p} className="flex items-center">
+                      {idx > 0 && arr[idx - 1] !== p - 1 && (
+                        <span className="px-1 text-gray-600">…</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setVisitPage(p)}
+                        className={`h-7 w-7 rounded-lg text-xs transition ${
+                          p === visitPage
+                            ? "bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-400/40"
+                            : "text-gray-400 hover:bg-white/5"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    </span>
+                  ))}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setVisitPage((p) => Math.min(visitTotalPages, p + 1))
+                  }
+                  disabled={visitPage >= visitTotalPages}
+                  className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-gray-300 disabled:opacity-30"
+                >
+                  下一页
+                </button>
+              </div>
+            )}
           </div>
         )}
 
