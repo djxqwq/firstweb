@@ -261,4 +261,18 @@ html.cosmic-cursor * {
   }
 }
 
+/* SMIL animateMotion often stays frozen when SVG is injected via JS;
+   rotate the whole orbit disk instead (icons already sit on rings). */
+.tech-orbit-spinning > svg {
+  animation: tech-orbit-spin 52s linear infinite;
+  transform-origin: center;
+  transform-box: view-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tech-orbit-spinning > svg {
+    animation: none;
+  }
+}
+
 

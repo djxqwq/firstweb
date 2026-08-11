@@ -1071,22 +1071,72 @@ def _norm_city(name: str) -> str:
     return name
 
 
+def _normalize_district(name: str, city: str = "") -> str:
+    """把「富阳」「西湖」等补成区县级；拒绝乡镇当区县。"""
+    d = (name or "").strip()
+    if not d:
+        return ""
+    if d.endswith(("镇", "乡", "村")):
+        return ""
+    if d.endswith(("区", "县", "旗")):
+        return d
+    if d.endswith("街道"):
+        return ""
+    # 裸地名：杭州常见区
+    if city in ("杭州", "杭州市") and d in {
+        "西湖",
+        "上城",
+        "拱墅",
+        "滨江",
+        "萧山",
+        "余杭",
+        "临平",
+        "钱塘",
+        "富阳",
+        "临安",
+        "桐庐",
+        "淳安",
+        "建德",
+    }:
+        return f"{d}区" if d not in {"桐庐", "淳安", "建德"} else f"{d}县"
+    if len(d) <= 4 and not d.endswith(("市", "省")):
+        return f"{d}区"
+    return ""
+
+
 def _pick_district(*candidates: str, city: str = "", region: str = "") -> str:
-    """从候选里挑更可信的区县：优先「区/县/旗」，避免误用乡镇。"""
+    """从候选里挑更可信的区县：优先「区/县/旗」，绝不回落乡镇。"""
     preferred: list[str] = []
-    fallback: list[str] = []
     ban = {city, region, f"{city}市", f"{region}省", ""}
     for raw in candidates:
-        d = (raw or "").strip()
+        d = _normalize_district(raw, city=city)
         if not d or d in ban or len(d) > 12:
             continue
         if d.endswith(("区", "县", "旗")):
             preferred.append(d)
-        elif d.endswith(("镇", "乡", "街道", "村")):
-            fallback.append(d)
-        else:
-            fallback.append(d)
-    return (preferred or fallback or [""])[0]
+    return preferred[0] if preferred else ""
+
+
+def _coords_plausible(city: str, lat, lon) -> bool:
+    """粗滤明显错城的坐标（如杭州却落到金华一带）。"""
+    try:
+        lat_f = float(lat)
+        lon_f = float(lon)
+    except (TypeError, ValueError):
+        return False
+    boxes = {
+        "杭州": (29.85, 30.65, 119.70, 120.70),
+        "杭州市": (29.85, 30.65, 119.70, 120.70),
+        "北京": (39.4, 41.1, 115.7, 117.5),
+        "上海": (30.7, 31.9, 120.8, 122.2),
+        "深圳": (22.4, 22.9, 113.7, 114.7),
+        "广州": (22.8, 23.5, 113.0, 113.7),
+    }
+    box = boxes.get(city) or boxes.get(f"{city}市")
+    if not box:
+        return True
+    min_lat, max_lat, min_lon, max_lon = box
+    return min_lat <= lat_f <= max_lat and min_lon <= lon_f <= max_lon
 
 
 def lookup_ip_geo(ip: str) -> dict:
@@ -1199,6 +1249,38 @@ def lookup_ip_geo(ip: str) -> dict:
     except Exception:
         pass
 
+    # 2b. ip9.com.cn —— 国内常能给到区县（area），补 pconline 空白
+    ip9: dict = {}
+    try:
+        url_ip9 = f"https://ip9.com.cn/get?ip={ip}"
+        req_ip9 = urllib.request.Request(
+            url_ip9,
+            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req_ip9, timeout=4) as resp_ip9:
+            data_ip9 = json.loads(resp_ip9.read().decode("utf-8"))
+        d9 = (data_ip9 or {}).get("data") or {}
+        if data_ip9.get("ret") == 200 and d9:
+            city9 = _norm_city((d9.get("city") or "").strip())
+            area9 = (d9.get("area") or "").strip()
+            lat9 = d9.get("lat")
+            lon9 = d9.get("lng") or d9.get("lon")
+            ip9 = {
+                "country": (d9.get("country") or "中国").strip(),
+                "region": _norm_region((d9.get("prov") or "").strip()),
+                "city": city9,
+                "district": _normalize_district(area9, city=city9),
+                "isp": (d9.get("isp") or "").strip(),
+                "_lat": float(lat9) if lat9 not in (None, "") else None,
+                "_lon": float(lon9) if lon9 not in (None, "") else None,
+            }
+            if ip9["_lat"] is not None and ip9["_lon"] is not None:
+                if not _coords_plausible(city9, ip9["_lat"], ip9["_lon"]):
+                    ip9["_lat"] = None
+                    ip9["_lon"] = None
+    except Exception:
+        pass
+
     # 合并：国内且 pconline 有城市时，优先用 pconline（电信宽带常被 ip-api 标错）
     prefer_pconline = bool(pconline.get("city")) and (
         ipapi_city_bad
@@ -1212,45 +1294,70 @@ def lookup_ip_geo(ip: str) -> dict:
     )
 
     if prefer_pconline:
+        city_m = pconline.get("city") or ip9.get("city") or ""
         result = {
-            "country": pconline.get("country") or ipapi.get("country") or "中国",
-            "region": pconline.get("region") or ipapi.get("region") or "",
-            "city": pconline.get("city") or "",
+            "country": pconline.get("country") or ip9.get("country") or ipapi.get("country") or "中国",
+            "region": pconline.get("region") or ip9.get("region") or ipapi.get("region") or "",
+            "city": city_m,
             "district": _pick_district(
                 pconline.get("district", ""),
+                ip9.get("district", ""),
                 ipapi.get("district", ""),
-                city=pconline.get("city") or "",
-                region=pconline.get("region") or "",
+                city=city_m,
+                region=pconline.get("region") or ip9.get("region") or "",
             ),
-            "isp": pconline.get("isp") or ipapi.get("isp") or "",
-            # 城市已改用国内源时，不用错误坐标做反查
-            "_lat": None if (ipapi_city_bad or (ipapi.get("city") and ipapi.get("city") != pconline.get("city"))) else ipapi.get("_lat"),
-            "_lon": None if (ipapi_city_bad or (ipapi.get("city") and ipapi.get("city") != pconline.get("city"))) else ipapi.get("_lon"),
+            "isp": pconline.get("isp") or ip9.get("isp") or ipapi.get("isp") or "",
+            "_lat": None,
+            "_lon": None,
         }
+        # 坐标：优先可信的 ip9；ip-api 城市与国内源不一致时一律丢弃
+        if ip9.get("_lat") is not None and _coords_plausible(city_m, ip9.get("_lat"), ip9.get("_lon")):
+            result["_lat"] = ip9.get("_lat")
+            result["_lon"] = ip9.get("_lon")
+        elif (
+            not ipapi_city_bad
+            and ipapi.get("city") == city_m
+            and _coords_plausible(city_m, ipapi.get("_lat"), ipapi.get("_lon"))
+        ):
+            result["_lat"] = ipapi.get("_lat")
+            result["_lon"] = ipapi.get("_lon")
     else:
+        city_m = ipapi.get("city") or pconline.get("city") or ip9.get("city") or ""
         result = {
-            "country": ipapi.get("country") or pconline.get("country") or "",
-            "region": ipapi.get("region") or pconline.get("region") or "",
-            "city": ipapi.get("city") or pconline.get("city") or "",
+            "country": ipapi.get("country") or pconline.get("country") or ip9.get("country") or "",
+            "region": ipapi.get("region") or pconline.get("region") or ip9.get("region") or "",
+            "city": city_m,
             "district": _pick_district(
                 ipapi.get("district", ""),
                 pconline.get("district", ""),
-                city=ipapi.get("city") or pconline.get("city") or "",
+                ip9.get("district", ""),
+                city=city_m,
                 region=ipapi.get("region") or pconline.get("region") or "",
             ),
-            "isp": ipapi.get("isp") or pconline.get("isp") or "",
-            "_lat": ipapi.get("_lat"),
-            "_lon": ipapi.get("_lon"),
+            "isp": ipapi.get("isp") or pconline.get("isp") or ip9.get("isp") or "",
+            "_lat": None,
+            "_lon": None,
         }
-        # 仍缺字段时用 pconline 补
+        if ip9.get("_lat") is not None and _coords_plausible(city_m, ip9.get("_lat"), ip9.get("_lon")):
+            result["_lat"] = ip9.get("_lat")
+            result["_lon"] = ip9.get("_lon")
+        elif _coords_plausible(city_m, ipapi.get("_lat"), ipapi.get("_lon")):
+            result["_lat"] = ipapi.get("_lat")
+            result["_lon"] = ipapi.get("_lon")
+        # 仍缺字段时用国内源补
         if not result["city"] and pconline.get("city"):
             result["city"] = pconline["city"]
         if not result["region"] and pconline.get("region"):
             result["region"] = pconline["region"]
-        if not result["district"] and pconline.get("district"):
-            result["district"] = pconline["district"]
-        if not result["isp"] and pconline.get("isp"):
-            result["isp"] = pconline["isp"]
+        if not result["district"]:
+            result["district"] = _pick_district(
+                pconline.get("district", ""),
+                ip9.get("district", ""),
+                city=result.get("city") or "",
+                region=result.get("region") or "",
+            )
+        if not result["isp"] and (pconline.get("isp") or ip9.get("isp")):
+            result["isp"] = pconline.get("isp") or ip9.get("isp") or ""
         if not result["country"] and (result["city"] or result["region"]):
             result["country"] = "中国"
 
@@ -1378,9 +1485,9 @@ def lookup_ip_geo(ip: str) -> dict:
         except Exception:
             pass
 
-    # 最终兜底：若区县是镇/乡且城市已知，宁可留空也不展示错误乡镇
+    # 最终兜底：只保留区/县/旗
     dist = (result.get("district") or "").strip()
-    if dist.endswith(("镇", "乡", "村")) and result.get("city"):
+    if dist and not dist.endswith(("区", "县", "旗")):
         result["district"] = ""
 
     result.pop("_lat", None)

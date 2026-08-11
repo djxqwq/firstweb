@@ -111,38 +111,209 @@ function TechOrbitVault({
   onLock: () => void;
   sparks: Spark[];
 }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const svgHostRef = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(false);
+  const mx = useMotionValue(0);
+  const my = useMotionValue(0);
+  const rx = useSpring(mx, { stiffness: 100, damping: 20, mass: 0.5 });
+  const ry = useSpring(my, { stiffness: 100, damping: 20, mass: 0.5 });
+
+  useEffect(() => {
+    let cancelled = false;
+    let raf = 0;
+    if (!svgHostRef.current) return;
+
+    type Body = {
+      g: SVGGElement;
+      r: number;
+      half: number;
+      angle: number;
+      speed: number; // rad / sec
+    };
+
+    fetch(`/effects/tech-orbit.svg?v=${Date.now()}`)
+      .then((r) => r.text())
+      .then((raw) => {
+        if (cancelled || !svgHostRef.current) return;
+        const cleaned = raw
+          .replace(/<\?xml[\s\S]*?\?>/i, "")
+          .replace(
+            /<svg\b([^>]*)>/i,
+            '<svg$1 style="width:100%;height:auto;display:block;overflow:visible">'
+          );
+        const hostEl = svgHostRef.current;
+        hostEl.innerHTML = cleaned;
+        const svg = hostEl.querySelector("svg");
+        if (!svg) {
+          setReady(true);
+          return;
+        }
+
+        const vb = svg.viewBox.baseVal;
+        const cx = vb.x + vb.width / 2;
+        const cy = vb.y + vb.height / 2;
+
+        type OrbitItem = {
+          g: SVGGElement;
+          am: Element;
+          ring: number;
+          slot: number;
+          r: number;
+          half: number;
+          durSec: number;
+        };
+        const items: OrbitItem[] = [];
+
+        svg.querySelectorAll("g").forEach((g) => {
+          const am = g.querySelector("animateMotion");
+          if (!am) return;
+          const mpath = am.querySelector("mpath");
+          const href =
+            mpath?.getAttribute("href") ||
+            mpath?.getAttributeNS("http://www.w3.org/1999/xlink", "href") ||
+            mpath?.getAttribute("xlink:href");
+          if (!href) return;
+          const path = svg.querySelector(href) as SVGPathElement | null;
+          if (!path || typeof path.getPointAtLength !== "function") return;
+          const pt = path.getPointAtLength(0);
+          const r = Math.hypot(pt.x - cx, pt.y - cy);
+          const m = href.match(/orbit-(\d+)-(\d+)/);
+          const ring = m ? Number(m[1]) : 0;
+          const slot = m ? Number(m[2]) : 0;
+          const prev = g.getAttribute("transform") || "";
+          const tm = prev.match(/translate\(([^,]+),([^)]+)\)/);
+          const half = tm ? Math.abs(Number(tm[1])) : 24;
+          const durRaw = am.getAttribute("dur") || "20s";
+          const durSec = Math.max(6, parseFloat(durRaw) || 20);
+          items.push({
+            g: g as SVGGElement,
+            am,
+            ring,
+            slot,
+            r,
+            half,
+            durSec,
+          });
+        });
+
+        items.sort((a, b) => a.ring - b.ring || a.slot - b.slot);
+
+        const byRing = new Map<number, OrbitItem[]>();
+        for (const it of items) {
+          const list = byRing.get(it.ring) ?? [];
+          list.push(it);
+          byRing.set(it.ring, list);
+        }
+
+        const bodies: Body[] = [];
+        const ringCount = byRing.size || 1;
+        byRing.forEach((list, ring) => {
+          // 每环错开相位，避免排成一条直径线
+          const phase = (ring / ringCount) * Math.PI;
+          list.forEach((it, i) => {
+            const angle = (i / list.length) * Math.PI * 2 + phase;
+            bodies.push({
+              g: it.g,
+              r: it.r,
+              half: it.half,
+              angle,
+              // 外圈稍慢，方向交替更自然
+              speed: ((ring % 2 === 0 ? 1 : -1) * (Math.PI * 2)) / it.durSec,
+            });
+            it.am.remove();
+          });
+        });
+
+        const place = (b: Body) => {
+          const x = cx + b.r * Math.cos(b.angle);
+          const y = cy + b.r * Math.sin(b.angle);
+          // 只平移、不随轨道翻转，logo 保持正立
+          b.g.setAttribute(
+            "transform",
+            `translate(${x - b.half},${y - b.half})`
+          );
+        };
+        bodies.forEach(place);
+
+        setReady(true);
+
+        let last = performance.now();
+        const tick = (now: number) => {
+          if (cancelled) return;
+          const dt = Math.min(0.05, (now - last) / 1000);
+          last = now;
+          for (const b of bodies) {
+            b.angle += b.speed * dt;
+            place(b);
+          }
+          raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+      })
+      .catch(() => {
+        if (!cancelled) setReady(true);
+      });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      if (svgHostRef.current) svgHostRef.current.innerHTML = "";
+    };
+  }, []);
+
   return (
     <motion.div
+      ref={wrapRef}
       initial={{ opacity: 0, scale: 0.78 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.9 }}
       transition={{ type: "spring", stiffness: 170, damping: 20 }}
       className="relative mx-auto w-[min(94vw,640px)]"
+      style={{
+        rotateX: ry,
+        rotateY: rx,
+        transformPerspective: 1000,
+      }}
+      onMouseMove={(e) => {
+        const el = wrapRef.current;
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        const dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+        const dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+        mx.set(Math.max(-1, Math.min(1, dx)) * 6);
+        my.set(Math.max(-1, Math.min(1, -dy)) * 5);
+      }}
+      onMouseLeave={() => {
+        mx.set(0);
+        my.set(0);
+      }}
     >
       <SparkLayer sparks={sparks} />
 
-      <img
-        src="/effects/tech-orbit.svg"
-        alt="技术栈轨道"
-        className="pointer-events-none relative z-10 block h-auto w-full select-none drop-shadow-[0_0_48px_rgba(34,211,238,0.2)]"
-        draggable={false}
+      <div
+        ref={svgHostRef}
+        className={`pointer-events-none relative z-10 w-full select-none drop-shadow-[0_0_48px_rgba(34,211,238,0.2)] [&_svg]:h-auto [&_svg]:w-full ${
+          ready ? "" : "min-h-[min(94vw,640px)] animate-pulse rounded-full bg-white/5"
+        }`}
+        aria-hidden
       />
 
       <div className="absolute inset-0 z-30 flex items-center justify-center">
         <button
           type="button"
           onClick={onLock}
-          className="flex h-[80px] w-[80px] cursor-pointer flex-col items-center justify-center rounded-full border border-cyan-300/50 bg-[#030014]/88 outline-none backdrop-blur-md transition hover:border-cyan-200/80 hover:shadow-[0_0_28px_rgba(34,211,238,0.5)]"
+          className="flex h-[48px] w-[48px] cursor-pointer flex-col items-center justify-center rounded-full border border-cyan-300/45 bg-[#030014]/85 outline-none backdrop-blur-md transition hover:border-cyan-200/75 hover:shadow-[0_0_18px_rgba(34,211,238,0.45)]"
           aria-label="锁定"
         >
           <Image
             src="/lock-main.png"
             alt=""
-            width={30}
-            height={30}
+            width={18}
+            height={18}
             draggable={false}
           />
-          <span className="mt-0.5 text-[8px] tracking-[0.18em] text-cyan-200/80">
+          <span className="mt-0.5 text-[7px] tracking-[0.16em] text-cyan-200/75">
             LOCK
           </span>
         </button>
@@ -173,15 +344,21 @@ function CyberNetLayer({
     }
     let cancelled = false;
     const boot = async () => {
-      if (!window.createCyberNetwork) {
-        await new Promise<void>((resolve, reject) => {
-          const s = document.createElement("script");
-          s.src = "/effects/cyber-network.js?v=4";
-          s.onload = () => resolve();
-          s.onerror = () => reject();
-          document.body.appendChild(s);
-        }).catch(() => null);
-      }
+      // 强制拉最新脚本，避免旧 createCyberNetwork 缓存导致鼠标交互失效
+      await new Promise<void>((resolve, reject) => {
+        const prev = document.querySelector<HTMLScriptElement>(
+          'script[data-cyber-network="1"]'
+        );
+        prev?.remove();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        delete (window as any).createCyberNetwork;
+        const s = document.createElement("script");
+        s.src = `/effects/cyber-network.js?v=7`;
+        s.dataset.cyberNetwork = "1";
+        s.onload = () => resolve();
+        s.onerror = () => reject();
+        document.body.appendChild(s);
+      }).catch(() => null);
       const host = hostRef.current;
       if (cancelled || !canvasRef.current || !host) return;
       if (!window.createCyberNetwork) return;
@@ -364,18 +541,9 @@ export const Encryption = () => {
         />
       </motion.div>
 
-      {/* calm dark plate when orbit open */}
-      <motion.div
-        className="pointer-events-none absolute inset-0 z-0"
-        animate={{ opacity: open ? 1 : 0 }}
-        transition={{ duration: 0.45 }}
-        style={{
-          background:
-            "radial-gradient(circle at 50% 45%, #0b1224 0%, #030014 70%)",
-        }}
-      />
+      {/* calm plate removed — cyber-network draws full #030712 backdrop */}
 
-      {/* interactive neural net — appears with unlock */}
+      {/* interactive neural net */}
       <CyberNetLayer active={open} hostRef={sectionRef} />
 
       {/* title */}
@@ -414,7 +582,7 @@ export const Encryption = () => {
         >
           <h1 className="Welcome-text text-[12px]">
             {open
-              ? "移动鼠标扰动神经网络 · 点中心锁收回"
+              ? "神经网络已展开 · 点中心锁收回"
               : busy
                 ? "解锁中…"
                 : "点击锁 · 展开技术栈轨道"}

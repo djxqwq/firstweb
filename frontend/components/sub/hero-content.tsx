@@ -1,7 +1,7 @@
 "use client";
 
 import { SparklesIcon } from "@heroicons/react/24/solid";
-import { motion, useMotionTemplate, useMotionValue } from "framer-motion";
+import { motion, useMotionValue, useSpring } from "framer-motion";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 
@@ -23,35 +23,64 @@ const DEFAULT_ROLES = [
 const DEFAULT_BIO =
   "浙江财经大学软件工程专业学生，专注于全栈开发和人工智能领域。热爱算法竞赛，擅长 C/C++、Python、Java 开发，致力于构建优雅、高效的解决方案。";
 
+/** Subtle parallax + light 3D tilt — listens on Hero section. */
 function HeroOrb() {
   const ref = useRef<HTMLDivElement>(null);
-  const x = useMotionValue(0);
-  const y = useMotionValue(0);
-  const rot = useMotionValue(0);
-  const transform = useMotionTemplate`translate(${x}px, ${y}px) rotate(${rot}deg)`;
+  const tx = useMotionValue(0);
+  const ty = useMotionValue(0);
+  const rx = useMotionValue(0);
+  const ry = useMotionValue(0);
+  const spring = { stiffness: 45, damping: 26, mass: 0.7 };
+  const x = useSpring(tx, spring);
+  const y = useSpring(ty, spring);
+  const rotateX = useSpring(rx, spring);
+  const rotateY = useSpring(ry, spring);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const section = el.closest("section");
+    if (!section) return;
+
+    const onMove = (e: MouseEvent) => {
+      const r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const nx = Math.max(-1, Math.min(1, (e.clientX - cx) / (r.width / 2)));
+      const ny = Math.max(-1, Math.min(1, (e.clientY - cy) / (r.height / 2)));
+      tx.set(nx * 6);
+      ty.set(ny * 4);
+      ry.set(nx * 5);
+      rx.set(-ny * 4);
+    };
+
+    const onLeave = () => {
+      tx.set(0);
+      ty.set(0);
+      rx.set(0);
+      ry.set(0);
+    };
+
+    section.addEventListener("mousemove", onMove);
+    section.addEventListener("mouseleave", onLeave);
+    return () => {
+      section.removeEventListener("mousemove", onMove);
+      section.removeEventListener("mouseleave", onLeave);
+    };
+  }, [tx, ty, rx, ry]);
 
   return (
     <motion.div
       ref={ref}
       variants={slideInFromRight(0.8)}
       className="relative z-10 hidden h-full w-full items-center justify-center md:flex"
-      style={{ transform }}
-      onMouseMove={(e) => {
-        const el = ref.current;
-        if (!el) return;
-        const r = el.getBoundingClientRect();
-        const dx = e.clientX - (r.left + r.width / 2);
-        const dy = e.clientY - (r.top + r.height / 2);
-        x.set(dx * 0.04);
-        y.set(dy * 0.04);
-        rot.set(dx * 0.01);
+      style={{
+        x,
+        y,
+        rotateX,
+        rotateY,
+        transformPerspective: 1100,
       }}
-      onMouseLeave={() => {
-        x.set(0);
-        y.set(0);
-        rot.set(0);
-      }}
-      whileTap={{ scale: 0.97 }}
     >
       <Image
         src="/hero-bg.svg"
@@ -59,7 +88,7 @@ function HeroOrb() {
         height={650}
         width={650}
         draggable={false}
-        className="select-none drop-shadow-[0_0_40px_rgba(112,66,248,0.35)] transition duration-500 hover:drop-shadow-[0_0_55px_rgba(34,211,238,0.45)]"
+        className="select-none drop-shadow-[0_0_40px_rgba(112,66,248,0.35)]"
       />
     </motion.div>
   );
@@ -98,7 +127,7 @@ export const HeroContent = () => {
     <motion.div
       initial="hidden"
       animate="visible"
-      className="relative z-[20] mt-32 flex w-full flex-row items-center justify-center px-6 md:mt-40 md:px-20"
+      className="pointer-events-none relative z-[20] mt-32 flex w-full flex-row items-center justify-center px-6 md:mt-40 md:px-20"
     >
       <div className="m-auto flex h-full w-full flex-col justify-center gap-5 text-start">
         <motion.div
@@ -181,7 +210,7 @@ export const HeroContent = () => {
 
         <motion.div
           variants={slideInFromLeft(1)}
-          className="flex flex-wrap gap-3"
+          className="pointer-events-auto flex flex-wrap gap-3"
         >
           <MagneticButton href="#projects" variant="primary">
             项目
