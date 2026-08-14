@@ -299,6 +299,7 @@ export default function AdminPage() {
   const [loginQ, setLoginQ] = useState("");
   const [saving, setSaving] = useState(false);
   const [msgBadge, setMsgBadge] = useState(0);
+  const [unrepliedCount, setUnrepliedCount] = useState(0);
   const [composerOpen, setComposerOpen] = useState(false);
 
   useEffect(() => {
@@ -404,8 +405,15 @@ export default function AdminPage() {
             | undefined;
           if (body?.reply_to || body?.is_admin) return false;
           return !replied.has(item.id);
+        });
+        setUnrepliedCount(unreplied.length);
+        // 红点 = 比上次查看时间新的消息
+        const lastSeen = Number(localStorage.getItem("lastSeenMsgTime") || 0);
+        const fresh = data.filter((item) => {
+          const ts = item.created_at ? new Date(item.created_at).getTime() : 0;
+          return ts > lastSeen;
         }).length;
-        setMsgBadge(unreplied);
+        setMsgBadge(fresh);
       }
     }
   }, [token, type, tab, logout]);
@@ -430,8 +438,14 @@ export default function AdminPage() {
             | undefined;
           if (body?.reply_to || body?.is_admin) return false;
           return !replied.has(item.id);
+        });
+        setUnrepliedCount(unreplied.length);
+        const lastSeen = Number(localStorage.getItem("lastSeenMsgTime") || 0);
+        const fresh = data.filter((item) => {
+          const ts = item.created_at ? new Date(item.created_at).getTime() : 0;
+          return ts > lastSeen;
         }).length;
-        setMsgBadge(unreplied);
+        setMsgBadge(fresh);
       })
       .catch(() => {});
     fetch(`${API}/api/visits/stats?days=7`)
@@ -1500,7 +1514,13 @@ export default function AdminPage() {
               <button
                 key={item.key}
                 type="button"
-                onClick={() => setTab(item.key)}
+                onClick={() => {
+                  setTab(item.key);
+                  if (item.key === "messages") {
+                    localStorage.setItem("lastSeenMsgTime", Date.now().toString());
+                    setMsgBadge(0);
+                  }
+                }}
                 title={`快捷键 ${idx + 1}`}
                 className={`admin-tab ${
                   tab === item.key ? "admin-tab-active" : "admin-tab-idle"
@@ -2876,7 +2896,7 @@ export default function AdminPage() {
                     <div>
                       <h2 className="text-lg text-white">留言墙</h2>
                       <p className="text-[11px] text-gray-500">
-                        未回复优先 · 支持批量删除 · 角标显示待回复数
+                        未回复优先 · 支持批量删除 · 角标显示新消息数
                       </p>
                     </div>
                     <button
@@ -2984,9 +3004,9 @@ export default function AdminPage() {
                     </select>
                     <span className="text-xs text-gray-500">
                       {sortedMessages.length} 条
-                      {msgBadge > 0 && (
+                      {unrepliedCount > 0 && (
                         <span className="ml-1 text-rose-300">
-                          · {msgBadge} 待回复
+                          · {unrepliedCount} 待回复
                         </span>
                       )}
                     </span>

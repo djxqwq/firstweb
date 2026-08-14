@@ -1170,7 +1170,7 @@ def lookup_ip_geo(ip: str) -> dict:
     try:
         url = (
             f"http://ip-api.com/json/{ip}"
-            "?lang=zh-CN&fields=status,country,regionName,city,district,isp,org,query,lat,lon"
+            "?lang=zh-CN&fields=status,country,regionName,city,district,isp,org,query,lat,lon,proxy,hosting"
         )
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=3) as resp:
@@ -1189,6 +1189,8 @@ def lookup_ip_geo(ip: str) -> dict:
                 "_lat": None if ipapi_city_bad else data.get("lat"),
                 "_lon": None if ipapi_city_bad else data.get("lon"),
                 "_city_bad": ipapi_city_bad,
+                "proxy": bool(data.get("proxy", False)),
+                "hosting": bool(data.get("hosting", False)),
             }
     except Exception:
         pass
@@ -1493,6 +1495,9 @@ def lookup_ip_geo(ip: str) -> dict:
     result.pop("_lat", None)
     result.pop("_lon", None)
     result.pop("_city_bad", None)
+    # VPN / 代理 / 云主机检测
+    result["proxy"] = bool(ipapi.get("proxy", False))
+    result["hosting"] = bool(ipapi.get("hosting", False))
     _geo_cache[ip] = (now, result.copy())
     return result
 
@@ -1546,6 +1551,10 @@ VISIT_DEDUP_SECONDS = 300
 @app.post("/api/visits")
 def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)):
     ip = get_client_ip(request)
+
+    # 国外 / VPN 节点：不记录访客
+    if not is_china_ip(ip):
+        return {"ok": True, "blocked": True, "reason": "foreign_or_vpn"}
     ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:16]
     ua = (request.headers.get("user-agent") or "")[:512]
     path = payload.path[:255]
@@ -1746,10 +1755,52 @@ def visit_myinfo(request: Request):
         "city": geo.get("city", ""),
         "district": geo.get("district", ""),
         "isp": geo.get("isp", ""),
+        "proxy": geo.get("proxy", False),
+        "hosting": geo.get("hosting", False),
         "device": detect_device(ua),
         "os": bo["os"],
         "browser": bo["browser"],
         "ua": ua,
+    }
+
+
+def is_china_ip(ip: str) -> bool:
+    """判断 IP 是否来自中国大陆。
+
+    规则：
+    1. 本地/内网 IP → 允许（开发环境）
+    2. ip-api 标记为 proxy 或 hosting → 拦截（VPN / 云主机）
+    3. country 不是「中国」→ 拦截（境外节点）
+    """
+    if not ip or ip in ("127.0.0.1", "localhost", "::1", ""):
+        return True
+    if ip.startswith(("10.", "172.", "192.168.", "169.254.")):
+        return True
+    geo = lookup_ip_geo(ip)
+    if geo.get("proxy") or geo.get("hosting"):
+        return False
+    country = (geo.get("country") or "").strip()
+    return country == "中国" or country == "China"
+
+
+@app.get("/api/access-check")
+def access_check(request: Request):
+    """检查访客是否被允许访问站点。
+
+    国内 IP → allowed=True
+    国外 / VPN → allowed=False，前端展示拦截动画
+    """
+    ip = get_client_ip(request)
+    geo = lookup_ip_geo(ip)
+    allowed = is_china_ip(ip)
+    return {
+        "allowed": allowed,
+        "ip": ip,
+        "country": geo.get("country", ""),
+        "city": geo.get("city", ""),
+        "proxy": geo.get("proxy", False),
+        "hosting": geo.get("hosting", False),
+        "isp": geo.get("isp", ""),
     }
 
 

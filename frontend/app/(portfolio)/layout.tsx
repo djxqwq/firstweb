@@ -6,10 +6,11 @@ import { LazyVideos } from "@/components/main/lazy-videos";
 import { Navbar } from "@/components/main/navbar";
 import { SpaceMusicPlayer } from "@/components/main/space-music-player";
 import { StarsCanvas } from "@/components/main/star-background";
+import { VpnBlocker } from "@/components/main/vpn-blocker";
 
 export default function PortfolioLayout({ children }: PropsWithChildren) {
   return (
-    <>
+    <VpnBlocker>
       <StarsCanvas />
       <InteractiveCanvas />
       <CosmicCursor />
@@ -18,6 +19,6 @@ export default function PortfolioLayout({ children }: PropsWithChildren) {
       {children}
       <SpaceMusicPlayer />
       <Footer />
-    </>
+    </VpnBlocker>
   );
 }

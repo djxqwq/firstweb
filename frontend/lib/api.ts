@@ -341,4 +341,26 @@ export async function replyMessage(
   return res.json();
 }
 
+export type AccessCheck = {
+  allowed: boolean;
+  ip: string;
+  country: string;
+  city: string;
+  proxy: boolean;
+  hosting: boolean;
+  isp: string;
+};
+
+export async function fetchAccessCheck(): Promise<AccessCheck | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/access-check`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as AccessCheck;
+  } catch {
+    return null;
+  }
+}
+
 export { API_BASE };
