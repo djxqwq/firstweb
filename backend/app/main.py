@@ -133,6 +133,8 @@ class Visit(Base):
     referrer = Column(String(512), default="")
     device = Column(String(64), default="")
     deleted = Column(Boolean, default=False, index=True)
+    blocked = Column(Boolean, default=False, index=True)
+    proxy = Column(Boolean, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
@@ -550,6 +552,8 @@ def _migrate_visits_table(engine) -> None:
         "os": "VARCHAR(64) DEFAULT ''",
         "browser": "VARCHAR(64) DEFAULT ''",
         "deleted": "BOOLEAN DEFAULT 0",
+        "blocked": "BOOLEAN DEFAULT 0",
+        "proxy": "BOOLEAN DEFAULT 0",
     }
     with engine.connect() as conn:
         # 取现有列名
@@ -579,6 +583,7 @@ def _migrate_visits_table(engine) -> None:
             ("ix_visits_visitor_id", "visitor_id"),
             ("ix_visits_fingerprint_hash", "fingerprint_hash"),
             ("ix_visits_deleted", "deleted"),
+            ("ix_visits_blocked", "blocked"),
         ):
             if idx_name in idx_existing:
                 continue
@@ -1552,9 +1557,11 @@ VISIT_DEDUP_SECONDS = 300
 def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)):
     ip = get_client_ip(request)
 
-    # 国外 / VPN 节点：不记录访客
-    if not is_china_ip(ip):
-        return {"ok": True, "blocked": True, "reason": "foreign_or_vpn"}
+    # 检测是否为外网/VPN
+    geo = lookup_ip_geo(ip)
+    is_blocked = not is_china_ip(ip)
+    is_proxy = bool(geo.get("proxy", False))
+
     ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:16]
     ua = (request.headers.get("user-agent") or "")[:512]
     path = payload.path[:255]
@@ -1628,8 +1635,7 @@ def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)
     if already:
         return {"ok": True, "dedup": True, "visitor_id": visitor_id}
 
-    # 查询地理信息 + 解析 UA，存完整访客信息
-    geo = lookup_ip_geo(ip)
+    # 解析 UA
     bo = parse_browser_os(ua)
     # 纠正同 IP 历史记录里被 Nominatim 误标的「xx镇」区县
     try:
@@ -1664,10 +1670,12 @@ def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)
             path=path,
             referrer=payload.referrer[:512],
             device=payload.device[:64] or detect_device(ua),
+            blocked=is_blocked,
+            proxy=is_proxy,
         )
     )
     db.commit()
-    return {"ok": True, "visitor_id": visitor_id}
+    return {"ok": True, "visitor_id": visitor_id, "blocked": is_blocked}
 
 def _visit_day_expr():
     """日历日（Asia/Shanghai）。created_at 按 UTC naive 存储。"""
@@ -2070,6 +2078,40 @@ def admin_visits(
             "device": r.device,
             # 数据库存的是 UTC，但 DateTime 列不保留时区；取出后补上 UTC 标记，
             # 前端 new Date() 即可自动转为浏览器本地时区显示。
+            "created_at": r.created_at.replace(tzinfo=timezone.utc).isoformat()
+            if r.created_at
+            else None,
+        }
+        for r in rows
+    ]
+
+
+@app.get("/api/admin/visits/blocked")
+def admin_blocked_visits(
+    limit: int = 200,
+    db: Session = Depends(get_db),
+    _: Admin = Depends(get_current_admin),
+):
+    """外网/VPN 访问记录。"""
+    rows = db.scalars(
+        select(Visit)
+        .where(Visit.blocked.is_(True), Visit.deleted.is_(False))
+        .order_by(Visit.id.desc())
+        .limit(min(limit, 1000))
+    ).all()
+    return [
+        {
+            "id": r.id,
+            "ip": r.ip,
+            "country": r.country,
+            "city": r.city,
+            "isp": r.isp,
+            "path": r.path,
+            "device": r.device,
+            "os": r.os,
+            "browser": r.browser,
+            "proxy": r.proxy,
+            "ua": r.ua,
             "created_at": r.created_at.replace(tzinfo=timezone.utc).isoformat()
             if r.created_at
             else None,

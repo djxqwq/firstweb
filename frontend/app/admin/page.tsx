@@ -242,7 +242,7 @@ export default function AdminPage() {
   const [pass, setPass] = useState("");
   const [type, setType] = useState<string>("project");
   const [tab, setTab] = useState<
-    "contents" | "visits" | "messages" | "settings" | "logins"
+    "contents" | "visits" | "messages" | "settings" | "logins" | "blocked"
   >("contents");
   const [items, setItems] = useState<ContentItem[]>([]);
   const [visits, setVisits] = useState<VisitItem[]>([]);
@@ -301,6 +301,22 @@ export default function AdminPage() {
   const [msgBadge, setMsgBadge] = useState(0);
   const [unrepliedCount, setUnrepliedCount] = useState(0);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [blockedVisits, setBlockedVisits] = useState<
+    Array<{
+      id: number;
+      ip: string;
+      country: string;
+      city: string;
+      isp: string;
+      path: string;
+      device: string;
+      os: string;
+      browser: string;
+      proxy: boolean;
+      ua: string;
+      created_at: string | null;
+    }>
+  >([]);
 
   useEffect(() => {
     setToken(localStorage.getItem("admin_token") || "");
@@ -330,7 +346,8 @@ export default function AdminPage() {
         "2": "visits",
         "3": "messages",
         "4": "logins",
-        "5": "settings",
+        "5": "blocked",
+        "6": "settings",
       };
       const next = map[e.key];
       if (next) {
@@ -604,6 +621,18 @@ export default function AdminPage() {
     if (res.ok) setLoginRecords(await res.json());
   }, [token, logout]);
 
+  const loadBlockedVisits = useCallback(async () => {
+    if (!token) return;
+    const res = await fetch(`${API}/api/admin/visits/blocked?limit=200`, {
+      headers: authHeaders(token),
+    });
+    if (res.status === 401) {
+      logout();
+      return;
+    }
+    if (res.ok) setBlockedVisits(await res.json());
+  }, [token, logout]);
+
   const clearLoginRecords = async () => {
     if (!confirm("确认清空所有登录记录？")) return;
     const res = await fetch(`${API}/api/admin/login-records`, {
@@ -660,8 +689,9 @@ export default function AdminPage() {
     if (tab === "visits") loadVisits();
     else if (tab === "settings") loadSettings();
     else if (tab === "logins") loadLoginRecords();
+    else if (tab === "blocked") loadBlockedVisits();
     else loadContents();
-  }, [token, tab, type, loadContents, loadVisits, loadSettings, loadLoginRecords]);
+  }, [token, tab, type, loadContents, loadVisits, loadSettings, loadLoginRecords, loadBlockedVisits]);
 
   // 切类型后旧列表会短暂残留；若当前编辑 id 不在新列表里，清掉避免误 PUT
   useEffect(() => {
@@ -1508,6 +1538,7 @@ export default function AdminPage() {
                   badge: msgBadge > 0 ? msgBadge : null,
                 },
                 { key: "logins" as const, label: "登录", badge: null },
+                { key: "blocked" as const, label: "外网", badge: null },
                 { key: "settings" as const, label: "设置", badge: null },
               ]
             ).map((item, idx) => (
@@ -2343,6 +2374,86 @@ export default function AdminPage() {
                         {loginRecords.length
                           ? "无匹配记录"
                           : "暂无登录记录"}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {tab === "blocked" && (
+          <div className="admin-card overflow-hidden p-0">
+            <div className="flex items-center justify-between border-b border-white/5 px-5 py-3">
+              <div>
+                <h2 className="text-lg text-white">外网/VPN 访问记录</h2>
+                <p className="text-[11px] text-gray-500">
+                  境外 IP 或代理节点的访问记录 · 共 {blockedVisits.length} 条
+                </p>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-white/5 text-[11px] uppercase text-gray-500">
+                    <th className="whitespace-nowrap px-4 py-2.5 font-medium">时间</th>
+                    <th className="whitespace-nowrap px-4 py-2.5 font-medium">IP</th>
+                    <th className="whitespace-nowrap px-4 py-2.5 font-medium">国家/城市</th>
+                    <th className="whitespace-nowrap px-4 py-2.5 font-medium">ISP</th>
+                    <th className="whitespace-nowrap px-4 py-2.5 font-medium">类型</th>
+                    <th className="whitespace-nowrap px-4 py-2.5 font-medium">设备</th>
+                    <th className="whitespace-nowrap px-4 py-2.5 font-medium">路径</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {blockedVisits.map((r) => (
+                    <tr
+                      key={r.id}
+                      className="border-b border-white/5 text-gray-300 transition hover:bg-white/[0.03]"
+                    >
+                      <td className="whitespace-nowrap px-4 py-2.5 text-xs">
+                        {r.created_at
+                          ? new Date(r.created_at).toLocaleString("zh-CN", {
+                              hour12: false,
+                            })
+                          : "—"}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-xs text-rose-300/80">
+                        {r.ip || "—"}
+                      </td>
+                      <td className="px-4 py-2.5 text-xs">
+                        <span className="text-gray-300">{r.country || "未知"}</span>
+                        {r.city && (
+                          <span className="text-gray-500"> · {r.city}</span>
+                        )}
+                      </td>
+                      <td className="max-w-[200px] truncate px-4 py-2.5 text-xs text-gray-400" title={r.isp}>
+                        {r.isp || "—"}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span
+                          className={`rounded px-2 py-0.5 text-[10px] font-medium ${
+                            r.proxy
+                              ? "bg-red-500/15 text-red-300"
+                              : "bg-amber-500/15 text-amber-300"
+                          }`}
+                        >
+                          {r.proxy ? "VPN/代理" : "境外"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-xs text-gray-400">
+                        {r.os} · {r.browser}
+                      </td>
+                      <td className="max-w-[120px] truncate px-4 py-2.5 text-xs text-gray-500" title={r.path}>
+                        {r.path || "/"}
+                      </td>
+                    </tr>
+                  ))}
+                  {!blockedVisits.length && (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-10 text-center text-gray-500">
+                        暂无外网访问记录
                       </td>
                     </tr>
                   )}
