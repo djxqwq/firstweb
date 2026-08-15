@@ -1076,17 +1076,26 @@ def _norm_city(name: str) -> str:
     return name
 
 
+# BigDataCloud 等源会返回繁体后缀（拱墅區），统一转简体
+_TRAD_SIMP = {"區": "区", "縣": "县", "鎮": "镇", "鄉": "乡"}
+
+
+def _to_simp(s: str) -> str:
+    for k, v in _TRAD_SIMP.items():
+        s = s.replace(k, v)
+    return s
+
+
 def _normalize_district(name: str, city: str = "") -> str:
-    """把「富阳」「西湖」等补成区县级；拒绝乡镇当区县。"""
+    """把「富阳」「西湖」等补成区县级；街道/镇/乡保留（越详细越好）。"""
     d = (name or "").strip()
     if not d:
         return ""
-    if d.endswith(("镇", "乡", "村")):
-        return ""
+    # 街道/镇/乡/村是更详细的位置，直接保留
+    if d.endswith(("街道", "镇", "乡", "村")):
+        return d
     if d.endswith(("区", "县", "旗")):
         return d
-    if d.endswith("街道"):
-        return ""
     # 裸地名：杭州常见区
     if city in ("杭州", "杭州市") and d in {
         "西湖",
@@ -1110,16 +1119,20 @@ def _normalize_district(name: str, city: str = "") -> str:
 
 
 def _pick_district(*candidates: str, city: str = "", region: str = "") -> str:
-    """从候选里挑更可信的区县：优先「区/县/旗」，绝不回落乡镇。"""
-    preferred: list[str] = []
+    """从候选里挑更详细的位置：优先街道/镇级，其次区/县/旗。"""
+    street_level: list[str] = []
+    district_level: list[str] = []
     ban = {city, region, f"{city}市", f"{region}省", ""}
     for raw in candidates:
         d = _normalize_district(raw, city=city)
         if not d or d in ban or len(d) > 12:
             continue
-        if d.endswith(("区", "县", "旗")):
-            preferred.append(d)
-    return preferred[0] if preferred else ""
+        if d.endswith(("街道", "镇", "乡", "村")):
+            street_level.append(d)
+        elif d.endswith(("区", "县", "旗")):
+            district_level.append(d)
+    # 街道/镇比区县更详细，优先
+    return street_level[0] if street_level else (district_level[0] if district_level else "")
 
 
 def _coords_plausible(city: str, lat, lon) -> bool:
@@ -1418,13 +1431,13 @@ def lookup_ip_geo(ip: str) -> dict:
         except Exception:
             pass
 
-    # 4. Nominatim 区县 —— 仅在坐标可信且尚无「区/县」时使用；忽略乡镇级结果抢占
-    has_district_qu = bool(result.get("district")) and str(result["district"]).endswith(
-        ("区", "县", "旗")
-    )
+    # 4. Nominatim 反查 —— 坐标可信时取最详细位置（区县 + 街道/镇拼接）
+    has_district_detail = bool(result.get("district")) and str(
+        result["district"]
+    ).endswith(("区", "县", "旗", "街道", "镇", "乡", "村"))
     if (
         result.get("country")
-        and not has_district_qu
+        and not has_district_detail
         and result.get("_lat") is not None
         and result.get("_lon") is not None
     ):
@@ -1439,30 +1452,42 @@ def lookup_ip_geo(ip: str) -> dict:
                 url4,
                 headers={"User-Agent": "PersonalWebsite/1.0 (geolocation)"},
             )
-            with urllib.request.urlopen(req4, timeout=5) as resp4:
-                data4 = json.loads(resp4.read().decode("utf-8"))
-            addr4 = data4.get("address", {})
-            # 只要区县级，不要 town/village（容易变成「南马镇」这类错误）
-            # 注意：Nominatim 在中国行政区划里常把「区」放在 city 字段
-            # （如南京 32.04,118.77 → address.city="秦淮区"），
-            # 因此 city 也需作为候选；_pick_district 会过滤掉真正的城市名。
-            for key in (
-                "city_district",
-                "suburb",
-                "borough",
-                "district",
-                "county",
-                "city",
-            ):
-                district_candidate = (addr4.get(key) or "").strip()
-                picked = _pick_district(
-                    district_candidate,
-                    city=result.get("city") or "",
-                    region=result.get("region") or "",
-                )
-                if picked and picked.endswith(("区", "县", "旗")):
-                    result["district"] = picked
+            data4 = None
+            # 国内网络下 Nominatim 常被间歇性重置，重试一次
+            for _attempt in range(2):
+                try:
+                    with urllib.request.urlopen(req4, timeout=5) as resp4:
+                        data4 = json.loads(resp4.read().decode("utf-8"))
                     break
+                except Exception:
+                    continue
+            if not data4:
+                raise RuntimeError("nominatim unreachable")
+            addr4 = data4.get("address", {})
+            city_ref = result.get("city") or ""
+            region_ref = result.get("region") or ""
+            ban = {city_ref, region_ref, f"{city_ref}市", f"{region_ref}省", ""}
+            # 区县级：Nominatim 在中国常把「区」放在 city 字段（如"秦淮区"）
+            qu = ""
+            for key in ("city_district", "borough", "district", "county", "city"):
+                v = _normalize_district((addr4.get(key) or "").strip(), city=city_ref)
+                if v and v not in ban and v.endswith(("区", "县", "旗")):
+                    qu = v
+                    break
+            # 街道/镇级：suburb 通常是「xx街道」
+            street = ""
+            for key in ("suburb", "neighbourhood", "town", "village"):
+                v = (addr4.get(key) or "").strip()
+                if v and v not in ban and v.endswith(("街道", "镇", "乡", "村")):
+                    street = v
+                    break
+            # 拼接成最详细位置：如「秦淮区朝天宫街道」
+            if qu and street:
+                result["district"] = f"{qu}{street}"
+            elif street:
+                result["district"] = street
+            elif qu:
+                result["district"] = qu
         except Exception:
             pass
 
@@ -1496,9 +1521,42 @@ def lookup_ip_geo(ip: str) -> dict:
         except Exception:
             pass
 
-    # 最终兜底：只保留区/县/旗
+    # 5b. 仍无区县：BigDataCloud 免费逆地理（无需 key，国内可达，
+    #     Nominatim 被墙时的备用坐标反查）
+    if (
+        result.get("country")
+        and not result.get("district")
+        and result.get("_lat") is not None
+        and result.get("_lon") is not None
+    ):
+        try:
+            url5b = (
+                f"https://api.bigdatacloud.net/data/reverse-geocode-client"
+                f"?latitude={result['_lat']}&longitude={result['_lon']}&localityLanguage=zh"
+            )
+            req5b = urllib.request.Request(
+                url5b,
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+            )
+            with urllib.request.urlopen(req5b, timeout=6) as resp5b:
+                data5b = json.loads(resp5b.read().decode("utf-8"))
+            cand = [_to_simp((data5b.get("locality") or "").strip())]
+            for adm in ((data5b.get("localityInfo") or {}).get("administrative") or []):
+                if adm.get("adminLevel") == 6:
+                    cand.append(_to_simp((adm.get("name") or "").strip()))
+            picked5b = _pick_district(
+                *cand,
+                city=result.get("city") or "",
+                region=result.get("region") or "",
+            )
+            if picked5b:
+                result["district"] = picked5b
+        except Exception:
+            pass
+
+    # 最终兜底：保留区/县/旗/街道/镇/乡/村（越详细越好）
     dist = (result.get("district") or "").strip()
-    if dist and not dist.endswith(("区", "县", "旗")):
+    if dist and not dist.endswith(("区", "县", "旗", "街道", "镇", "乡", "村")):
         result["district"] = ""
 
     result.pop("_lat", None)
@@ -1641,7 +1699,7 @@ def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)
 
     # 解析 UA
     bo = parse_browser_os(ua)
-    # 纠正同 IP 历史记录里被 Nominatim 误标的「xx镇」区县
+    # 同步同 IP 历史记录的城市信息；街道/镇级位置保留不清（越详细越好）
     try:
         city_now = (geo.get("city") or "")[:64]
         district_now = (geo.get("district") or "")[:64]
@@ -1649,12 +1707,13 @@ def post_visit(payload: VisitIn, request: Request, db: Session = Depends(get_db)
             q_fix = db.query(Visit).filter(Visit.ip == ip[:64], Visit.deleted.is_(False))
             for row in q_fix.limit(200).all():
                 old_d = (row.district or "").strip()
-                if old_d.endswith(("镇", "乡", "村")) and old_d != district_now:
+                # 仅当本次查到更明确的位置时才更新，避免把已有街道记录清空
+                if old_d != district_now and district_now:
                     row.district = district_now
-                    if city_now and (not row.city or row.city != city_now):
-                        row.city = city_now
-                    if geo.get("region") and not row.region:
-                        row.region = geo.get("region", "")[:64]
+                if city_now and (not row.city or row.city != city_now):
+                    row.city = city_now
+                if geo.get("region") and not row.region:
+                    row.region = geo.get("region", "")[:64]
     except Exception:
         pass
     db.add(
@@ -1797,31 +1856,42 @@ def _is_private_ip(ip: str) -> bool:
     return False
 
 
+# 国内云 / 机房 ISP 关键词：country=中国 且 proxy/hosting 标记命中这些词
+# 才认为是国内 VPN / 云主机出口，予以拦截
+_DC_ISP_KEYWORDS = (
+    "阿里云", "腾讯云", "华为云", "亚马逊", "aws", "azure", "google cloud",
+    "数据中心", "idc", "bgp", "机房", "cloud", "vps", "ovh", "hetzner",
+    "digitalocean", "linode", "vultr", "甲骨文", "oracle", "ucloud", "青云",
+)
+
+
 def is_china_ip(ip: str) -> bool:
     """判断 IP 是否来自中国大陆。
 
     规则：
     1. 本地/内网 IP → 允许（开发环境）
-    2. ip-api 标记为 proxy 或 hosting → 拦截（VPN / 云主机）
-    3. country 明确为「中国」→ 允许
-    4. country 明确为非中国 → 拦截（境外节点）
-    5. country 为空（Geo 查询全部失败，如服务器网络异常）→ 允许
-       说明无法判定访客归属，默认放行以避免误伤所有正常访客。
+    2. country 明确为非中国 → 拦截（境外节点）
+    3. country 为空（Geo 查询全部失败）→ 允许（避免误伤所有访客）
+    4. country=中国：
+       - proxy/hosting 标记 + ISP 是机房/云 → 拦截（国内 VPN / 云主机出口）
+       - 其余（含 ip-api 对国内家宽的 proxy 误报，如电信 61.x 段）→ 允许
     """
     if not ip or ip in ("127.0.0.1", "localhost", "::1", ""):
         return True
     if _is_private_ip(ip):
         return True
     geo = lookup_ip_geo(ip)
-    if geo.get("proxy") or geo.get("hosting"):
-        return False
     country = (geo.get("country") or "").strip()
-    if country in ("中国", "China"):
-        return True
-    # Geo 查询全部失败时 country 为空，无法判定归属 → 默认放行
     if not country:
         return True
-    return False
+    if country not in ("中国", "China"):
+        return False
+    # country=中国：只有「代理标记 + 机房 ISP」才拦（真 VPN/云出口）
+    if geo.get("proxy") or geo.get("hosting"):
+        isp = (geo.get("isp") or "").lower()
+        if any(k in isp for k in _DC_ISP_KEYWORDS):
+            return False
+    return True
 
 
 @app.get("/api/access-check")
@@ -2276,10 +2346,7 @@ def admin_visitors(
         )
         # set 不可 JSON 序列化，转为计数
         a["sub_visitor_count"] = len(a.pop("sub_visitors", set()))
-        # 历史脏数据：错误坐标反查出来的乡镇不展示
-        dist = (a.get("last_district") or "").strip()
-        if dist.endswith(("镇", "乡", "村")):
-            a["last_district"] = ""
+        # 街道/镇/乡是最详细位置，直接展示，不再清空
     return result
 
 
