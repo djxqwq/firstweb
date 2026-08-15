@@ -1443,12 +1443,16 @@ def lookup_ip_geo(ip: str) -> dict:
                 data4 = json.loads(resp4.read().decode("utf-8"))
             addr4 = data4.get("address", {})
             # 只要区县级，不要 town/village（容易变成「南马镇」这类错误）
+            # 注意：Nominatim 在中国行政区划里常把「区」放在 city 字段
+            # （如南京 32.04,118.77 → address.city="秦淮区"），
+            # 因此 city 也需作为候选；_pick_district 会过滤掉真正的城市名。
             for key in (
                 "city_district",
                 "suburb",
                 "borough",
                 "district",
                 "county",
+                "city",
             ):
                 district_candidate = (addr4.get(key) or "").strip()
                 picked = _pick_district(
@@ -1772,23 +1776,52 @@ def visit_myinfo(request: Request):
     }
 
 
+def _is_private_ip(ip: str) -> bool:
+    """判断是否为内网 / 保留 IP（开发环境与反代容器内部地址）。"""
+    if not ip:
+        return False
+    if ip in ("127.0.0.1", "localhost", "::1"):
+        return True
+    if ip.startswith(("10.", "192.168.", "169.254.", "127.")):
+        return True
+    # 172.16.0.0 - 172.31.255.255 才是内网，172.x 其余段是公网
+    if ip.startswith("172."):
+        try:
+            second = int(ip.split(".")[1])
+            return 16 <= second <= 31
+        except (IndexError, ValueError):
+            return False
+    # IPv6 本地 / 唯一本地地址
+    if ip.startswith(("fc", "fd", "fe80")):
+        return True
+    return False
+
+
 def is_china_ip(ip: str) -> bool:
     """判断 IP 是否来自中国大陆。
 
     规则：
     1. 本地/内网 IP → 允许（开发环境）
     2. ip-api 标记为 proxy 或 hosting → 拦截（VPN / 云主机）
-    3. country 不是「中国」→ 拦截（境外节点）
+    3. country 明确为「中国」→ 允许
+    4. country 明确为非中国 → 拦截（境外节点）
+    5. country 为空（Geo 查询全部失败，如服务器网络异常）→ 允许
+       说明无法判定访客归属，默认放行以避免误伤所有正常访客。
     """
     if not ip or ip in ("127.0.0.1", "localhost", "::1", ""):
         return True
-    if ip.startswith(("10.", "172.", "192.168.", "169.254.")):
+    if _is_private_ip(ip):
         return True
     geo = lookup_ip_geo(ip)
     if geo.get("proxy") or geo.get("hosting"):
         return False
     country = (geo.get("country") or "").strip()
-    return country == "中国" or country == "China"
+    if country in ("中国", "China"):
+        return True
+    # Geo 查询全部失败时 country 为空，无法判定归属 → 默认放行
+    if not country:
+        return True
+    return False
 
 
 @app.get("/api/access-check")

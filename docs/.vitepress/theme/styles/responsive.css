@@ -1,0 +1,88 @@
+/* ============================================
+   响应式断点系统
+   ============================================ */
+
+/* 移动设备优先断点 */
+/* 超小设备（手机竖屏） */
+@media (max-width: 640px) {
+  :root {
+    --font-size-base: 0.9375rem;
+    --spacing-xl: 1.5rem;
+    --spacing-2xl: 2rem;
+    --spacing-3xl: 2.5rem;
+  }
+}
+
+/* 小设备（手机横屏） */
+@media (min-width: 641px) and (max-width: 768px) {
+  :root {
+    --font-size-base: 0.9375rem;
+  }
+}
+
+/* 中等设备（平板） */
+@media (min-width: 769px) and (max-width: 1024px) {
+  :root {
+    --font-size-base: 1rem;
+  }
+}
+
+/* 大设备（桌面） */
+@media (min-width: 1025px) {
+  :root {
+    --font-size-base: 1rem;
+  }
+}
+
+/* 容器最大宽度 */
+.container {
+  width: 100%;
+  max-width: var(--container-xl);
+  margin: 0 auto;
+  padding: 0 var(--spacing-lg);
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 0 var(--spacing-md);
+  }
+}
+
+/* 隐藏/显示工具类 */
+@media (max-width: 768px) {
+  .hidden-mobile {
+    display: none !important;
+  }
+}
+
+@media (min-width: 769px) {
+  .hidden-desktop {
+    display: none !important;
+  }
+}
+
+/* 网格系统 */
+.grid {
+  display: grid;
+  gap: var(--spacing-lg);
+}
+
+.grid-cols-1 { grid-template-columns: repeat(1, 1fr); }
+.grid-cols-2 { grid-template-columns: repeat(2, 1fr); }
+.grid-cols-3 { grid-template-columns: repeat(3, 1fr); }
+.grid-cols-4 { grid-template-columns: repeat(4, 1fr); }
+
+@media (max-width: 1024px) {
+  .grid-cols-4 { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (max-width: 768px) {
+  .grid-cols-3 { grid-template-columns: repeat(2, 1fr); }
+  .grid-cols-4 { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 640px) {
+  .grid-cols-2 { grid-template-columns: 1fr; }
+  .grid-cols-3 { grid-template-columns: 1fr; }
+  .grid-cols-4 { grid-template-columns: 1fr; }
+}

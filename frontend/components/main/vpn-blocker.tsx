@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchAccessCheck, type AccessCheck } from "@/lib/api";
+import { fetchAccessCheck, trackVisit, type AccessCheck } from "@/lib/api";
 
 /**
  * VPN / 境外节点拦截组件。
@@ -27,6 +27,12 @@ export function VpnBlocker({ children }: { children: React.ReactNode }) {
       }
       setInfo(data);
       setStatus(data.allowed ? "allowed" : "blocked");
+      // 被拦截时 children 不会挂载，VisitTracker 不会触发；
+      // 这里主动上报一次，让后台「外网/VPN 访问记录」能收到这条数据。
+      // 后端 post_visit 会按 IP 重新判定 blocked 并入库。
+      if (!data.allowed) {
+        trackVisit(window.location.pathname);
+      }
     });
     return () => {
       cancelled = true;
