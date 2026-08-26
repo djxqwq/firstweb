@@ -28,7 +28,10 @@ jobs:
             set -e
             echo "===== 拉取最新代码 ====="
             cd ~/firstweb
-            git pull origin main
+            # 部署机以 GitHub main 为准；避免本地分叉导致 pull 失败
+            git fetch origin main
+            git checkout main
+            git reset --hard origin/main
 
             echo "===== 重建 & 重启容器 ====="
             # 优先直接执行，失败则用 sudo（兼容未加入 docker 组的情况）
