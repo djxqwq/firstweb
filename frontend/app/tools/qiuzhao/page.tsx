@@ -54,6 +54,36 @@ type AppItem = {
   jd_url: string;
   apply_url: string;
   notes: string;
+  events?: InterviewRound[];
+};
+
+type InterviewRound = {
+  id: string;
+  type: "interview";
+  round: string;
+  at: string;
+  url: string;
+  done: boolean;
+  result: string;
+};
+
+type FormState = {
+  company: string;
+  role: string;
+  city: string;
+  channel: string;
+  track: string;
+  status: string;
+  priority: string;
+  applied_at: string;
+  exam_at: string;
+  exam_url: string;
+  exam_done: boolean;
+  exam_result: string;
+  salary: string;
+  jd_url: string;
+  apply_url: string;
+  notes: string;
 };
 
 type Stats = {
@@ -75,41 +105,67 @@ type Meta = {
   tracks: string[];
 };
 
-const EMPTY: Omit<AppItem, "id" | "status_label"> = {
+const ROUND_NAMES = ["一面", "二面", "三面", "HR面", "终面", "其他"];
+
+const EMPTY_FORM: FormState = {
   company: "",
   role: "",
   city: "",
   channel: "官网",
   track: "后端",
-  status: "wishlist",
+  status: "applied",
   priority: "normal",
   applied_at: "",
   exam_at: "",
   exam_url: "",
   exam_done: false,
   exam_result: "",
-  interview_at: "",
-  interview_url: "",
-  interview_done: false,
-  interview_round: "",
-  interview_result: "",
-  next_action_at: "",
   salary: "",
   jd_url: "",
   apply_url: "",
   notes: "",
 };
 
-const STATUS_STYLE: Record<string, string> = {
-  wishlist: "bg-slate-500/20 text-slate-300",
-  applied: "bg-sky-500/20 text-sky-300",
-  exam: "bg-amber-500/20 text-amber-300",
-  interview: "bg-violet-500/20 text-violet-300",
-  offer: "bg-emerald-500/20 text-emerald-300",
-  rejected: "bg-rose-500/20 text-rose-300",
-  ghosted: "bg-orange-500/20 text-orange-300",
-  closed: "bg-zinc-500/20 text-zinc-400",
-};
+function newRound(name = "一面"): InterviewRound {
+  return {
+    id: `r-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    type: "interview",
+    round: name,
+    at: "",
+    url: "",
+    done: false,
+    result: "",
+  };
+}
+
+function roundsFromItem(item: AppItem): InterviewRound[] {
+  const fromEvents = (item.events || [])
+    .filter((e) => e && (e.type === "interview" || !e.type))
+    .map((e, i) => ({
+      id: e.id || `legacy-${i}`,
+      type: "interview" as const,
+      round: e.round || `第${i + 1}面`,
+      at: e.at || "",
+      url: e.url || "",
+      done: !!e.done,
+      result: e.result || "",
+    }));
+  if (fromEvents.length) return fromEvents;
+  if (item.interview_at || item.interview_url || item.interview_round) {
+    return [
+      {
+        id: "legacy-0",
+        type: "interview",
+        round: item.interview_round || "一面",
+        at: item.interview_at || "",
+        url: item.interview_url || "",
+        done: !!item.interview_done,
+        result: item.interview_result || "",
+      },
+    ];
+  }
+  return [];
+}
 
 const KANBAN_COLS: StatusKey[] = [
   "wishlist",
@@ -121,7 +177,10 @@ const KANBAN_COLS: StatusKey[] = [
 ];
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const off = d.getTimezoneOffset();
+  const local = new Date(d.getTime() - off * 60_000);
+  return local.toISOString().slice(0, 10);
 }
 
 function isOverdue(d: string) {
@@ -133,9 +192,38 @@ function isSoon(d: string) {
   const t = todayIso();
   const week = new Date();
   week.setDate(week.getDate() + 7);
-  const w = week.toISOString().slice(0, 10);
+  const off = week.getTimezoneOffset();
+  const local = new Date(week.getTime() - off * 60_000);
+  const w = local.toISOString().slice(0, 10);
   return d >= t && d <= w;
 }
+
+function previewNextAction(
+  form: FormState,
+  rounds: InterviewRound[]
+): string {
+  const today = todayIso();
+  const dates: string[] = [];
+  if (form.exam_at && !form.exam_done) dates.push(form.exam_at);
+  for (const r of rounds) {
+    if (r.at && !r.done) dates.push(r.at);
+  }
+  const upcoming = dates.filter((d) => d >= today).sort();
+  if (upcoming[0]) return upcoming[0];
+  const past = dates.filter(Boolean).sort().reverse();
+  return past[0] || "";
+}
+
+const STATUS_STYLE: Record<string, string> = {
+  wishlist: "bg-slate-500/20 text-slate-300",
+  applied: "bg-sky-500/20 text-sky-300",
+  exam: "bg-amber-500/20 text-amber-300",
+  interview: "bg-violet-500/20 text-violet-300",
+  offer: "bg-emerald-500/20 text-emerald-300",
+  rejected: "bg-rose-500/20 text-rose-300",
+  ghosted: "bg-orange-500/20 text-orange-300",
+  closed: "bg-zinc-500/20 text-zinc-400",
+};
 
 export default function QiuzhaoPage() {
   const router = useRouter();
@@ -149,7 +237,9 @@ export default function QiuzhaoPage() {
   const [sort, setSort] = useState("next");
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm] = useState(EMPTY);
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [rounds, setRounds] = useState<InterviewRound[]>([]);
+  const [showMore, setShowMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [okMsg, setOkMsg] = useState("");
@@ -211,11 +301,9 @@ export default function QiuzhaoPage() {
 
   const openCreate = () => {
     setEditingId(null);
-    setForm({
-      ...EMPTY,
-      applied_at: todayIso(),
-      status: "applied",
-    });
+    setForm({ ...EMPTY_FORM, applied_at: todayIso(), status: "applied" });
+    setRounds([]);
+    setShowMore(false);
     setFormOpen(true);
   };
 
@@ -234,17 +322,13 @@ export default function QiuzhaoPage() {
       exam_url: item.exam_url,
       exam_done: item.exam_done,
       exam_result: item.exam_result,
-      interview_at: item.interview_at,
-      interview_url: item.interview_url,
-      interview_done: item.interview_done,
-      interview_round: item.interview_round,
-      interview_result: item.interview_result,
-      next_action_at: item.next_action_at,
       salary: item.salary,
       jd_url: item.jd_url,
       apply_url: item.apply_url,
       notes: item.notes,
     });
+    setRounds(roundsFromItem(item));
+    setShowMore(Boolean(item.salary || item.jd_url || item.apply_url || item.notes));
     setFormOpen(true);
   };
 
@@ -256,7 +340,13 @@ export default function QiuzhaoPage() {
     try {
       const payload = {
         ...form,
-        events: [],
+        next_action_at: "",
+        interview_at: "",
+        interview_url: "",
+        interview_done: false,
+        interview_round: "",
+        interview_result: "",
+        events: rounds,
       };
       const url = editingId
         ? `${API}/api/tools/qiuzhao/applications/${editingId}`
@@ -273,13 +363,21 @@ export default function QiuzhaoPage() {
         );
         return;
       }
-      setOkMsg(editingId ? "已更新" : "已新建");
+      setOkMsg(editingId ? "已更新" : "已添加");
       setFormOpen(false);
       await load(token);
     } finally {
       setSaving(false);
     }
   };
+
+  const updateRound = (id: string, patch: Partial<InterviewRound>) => {
+    setRounds((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, ...patch } : r))
+    );
+  };
+
+  const autoNext = previewNextAction(form, rounds);
 
   const remove = async (id: number) => {
     if (!token || !confirm("确认删除这条投递？")) return;
@@ -356,7 +454,7 @@ export default function QiuzhaoPage() {
                 className="admin-btn admin-btn-primary text-xs"
               >
                 <HiOutlinePlus className="mr-1 inline h-3.5 w-3.5" />
-                新建投递
+                添加公司
               </button>
             </div>
           </div>
@@ -501,7 +599,7 @@ export default function QiuzhaoPage() {
                   <th className="px-3 py-2.5">投递日</th>
                   <th className="px-3 py-2.5">笔试</th>
                   <th className="px-3 py-2.5">面试</th>
-                  <th className="px-3 py-2.5">下次</th>
+                  <th className="px-3 py-2.5">最近节点</th>
                   <th className="px-3 py-2.5">操作</th>
                 </tr>
               </thead>
@@ -570,36 +668,57 @@ export default function QiuzhaoPage() {
                       </div>
                     </td>
                     <td className="px-3 py-3 text-xs">
-                      <div>
-                        {item.interview_round
-                          ? `${item.interview_round} `
-                          : ""}
-                        {item.interview_at || "—"}
-                      </div>
-                      <div className="mt-0.5 flex flex-wrap gap-1">
-                        {item.interview_url && (
-                          <a
-                            href={item.interview_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="qz-link-chip"
-                          >
-                            <HiOutlineLink className="h-3 w-3" />
-                            链接
-                          </a>
-                        )}
-                        {item.interview_done ? (
-                          <span className="text-emerald-400">已面</span>
-                        ) : item.interview_at || item.interview_url ? (
-                          <span className="text-amber-400">未面</span>
-                        ) : null}
-                        {item.interview_result === "fail" && (
-                          <span className="text-rose-400">挂</span>
-                        )}
-                        {item.interview_result === "pass" && (
-                          <span className="text-emerald-400">过</span>
-                        )}
-                      </div>
+                      {(() => {
+                        const rs = roundsFromItem(item);
+                        if (!rs.length && !item.interview_at) {
+                          return <span className="text-gray-600">—</span>;
+                        }
+                        const list = rs.length
+                          ? rs
+                          : [
+                              {
+                                round: item.interview_round || "面试",
+                                at: item.interview_at,
+                                url: item.interview_url,
+                                done: item.interview_done,
+                                result: item.interview_result,
+                              },
+                            ];
+                        return (
+                          <div className="space-y-1">
+                            {list.map((r, idx) => (
+                              <div key={idx} className="flex flex-wrap items-center gap-1">
+                                <span className="text-violet-300/90">
+                                  {r.round || `第${idx + 1}面`}
+                                </span>
+                                <span className="tools-mono text-gray-400">
+                                  {r.at || "待定"}
+                                </span>
+                                {r.url && (
+                                  <a
+                                    href={r.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="qz-link-chip"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <HiOutlineLink className="h-3 w-3" />
+                                  </a>
+                                )}
+                                {r.done ? (
+                                  <span className="text-emerald-400">完</span>
+                                ) : null}
+                                {r.result === "fail" && (
+                                  <span className="text-rose-400">挂</span>
+                                )}
+                                {r.result === "pass" && (
+                                  <span className="text-emerald-400">过</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-3 font-mono text-xs">
                       <span
@@ -610,6 +729,7 @@ export default function QiuzhaoPage() {
                               ? "text-amber-300"
                               : ""
                         }
+                        title="由笔试/面试日期自动计算"
                       >
                         {item.next_action_at || "—"}
                       </span>
@@ -640,7 +760,7 @@ export default function QiuzhaoPage() {
                       colSpan={7}
                       className="px-3 py-10 text-center text-gray-500"
                     >
-                      还没有投递记录，点右上角「新建投递」
+                      还没有记录，点右上角「添加公司」
                     </td>
                   </tr>
                 )}
@@ -768,7 +888,7 @@ export default function QiuzhaoPage() {
             ))}
             {!agenda.length && (
               <p className="px-4 py-10 text-center text-sm text-gray-500">
-                暂无带日期的待办（填「下次动作」或笔试/面试日期）
+                暂无临近日程（给笔试/面试填上日期就会出现）
               </p>
             )}
           </motion.div>
@@ -792,10 +912,15 @@ export default function QiuzhaoPage() {
               onSubmit={save}
               className="tools-card qz-drawer max-h-[92vh] w-full max-w-2xl overflow-y-auto p-5"
             >
-            <div className="mb-4 flex items-center justify-between gap-2">
-              <h2 className="text-lg font-semibold text-white">
-                {editingId ? `编辑 #${editingId}` : "新建投递"}
-              </h2>
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight text-white">
+                  {editingId ? "编辑公司" : "添加公司"}
+                </h2>
+                <p className="qz-hint mt-0.5">
+                  先填基本信息，笔试/面试按需添加 · 日期点右侧日历选
+                </p>
+              </div>
               <button
                 type="button"
                 className="admin-btn admin-btn-ghost text-xs"
@@ -805,65 +930,40 @@ export default function QiuzhaoPage() {
               </button>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block sm:col-span-2">
+            {/* 首屏：一眼看完 */}
+            <div className="grid gap-2.5 sm:grid-cols-6">
+              <label className="block sm:col-span-3">
                 <span className="admin-field-label">公司 *</span>
                 <input
                   className="admin-input"
                   required
+                  autoFocus
+                  placeholder="如：字节跳动"
                   value={form.company}
                   onChange={(e) =>
                     setForm({ ...form, company: e.target.value })
                   }
                 />
               </label>
-              <label className="block">
+              <label className="block sm:col-span-3">
                 <span className="admin-field-label">岗位</span>
                 <input
                   className="admin-input"
+                  placeholder="如：后端开发"
                   value={form.role}
                   onChange={(e) => setForm({ ...form, role: e.target.value })}
                 />
               </label>
-              <label className="block">
+              <label className="block sm:col-span-2">
                 <span className="admin-field-label">城市</span>
                 <input
                   className="admin-input"
+                  placeholder="杭州"
                   value={form.city}
                   onChange={(e) => setForm({ ...form, city: e.target.value })}
                 />
               </label>
-              <label className="block">
-                <span className="admin-field-label">渠道</span>
-                <select
-                  className="admin-input"
-                  value={form.channel}
-                  onChange={(e) =>
-                    setForm({ ...form, channel: e.target.value })
-                  }
-                >
-                  {(meta?.channels || ["官网"]).map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <span className="admin-field-label">赛道</span>
-                <select
-                  className="admin-input"
-                  value={form.track}
-                  onChange={(e) => setForm({ ...form, track: e.target.value })}
-                >
-                  {(meta?.tracks || ["后端"]).map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
+              <label className="block sm:col-span-2">
                 <span className="admin-field-label">状态</span>
                 <select
                   className="admin-input"
@@ -879,23 +979,7 @@ export default function QiuzhaoPage() {
                   ))}
                 </select>
               </label>
-              <label className="block">
-                <span className="admin-field-label">优先级</span>
-                <select
-                  className="admin-input"
-                  value={form.priority}
-                  onChange={(e) =>
-                    setForm({ ...form, priority: e.target.value })
-                  }
-                >
-                  {(meta?.priorities || []).map((s) => (
-                    <option key={s.key} value={s.key}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
+              <label className="block sm:col-span-2">
                 <span className="admin-field-label">投递日期</span>
                 <input
                   type="date"
@@ -906,34 +990,46 @@ export default function QiuzhaoPage() {
                   }
                 />
               </label>
-              <label className="block">
-                <span className="admin-field-label">下次动作日</span>
-                <input
-                  type="date"
+              <label className="block sm:col-span-3">
+                <span className="admin-field-label">渠道</span>
+                <select
                   className="admin-input"
-                  value={form.next_action_at}
+                  value={form.channel}
                   onChange={(e) =>
-                    setForm({ ...form, next_action_at: e.target.value })
+                    setForm({ ...form, channel: e.target.value })
                   }
-                />
+                >
+                  {(meta?.channels || ["官网"]).map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
               </label>
-              <label className="block sm:col-span-2">
-                <span className="admin-field-label">薪资 / 备注薪资</span>
-                <input
+              <label className="block sm:col-span-3">
+                <span className="admin-field-label">赛道</span>
+                <select
                   className="admin-input"
-                  value={form.salary}
-                  onChange={(e) =>
-                    setForm({ ...form, salary: e.target.value })
-                  }
-                  placeholder="如 15-25k · 16薪"
-                />
+                  value={form.track}
+                  onChange={(e) => setForm({ ...form, track: e.target.value })}
+                >
+                  {(meta?.tracks || ["后端"]).map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
               </label>
+            </div>
 
-              <div className="sm:col-span-2 rounded-xl border border-white/8 bg-black/25 p-3">
-                <div className="mb-2 text-xs font-medium text-amber-200/90">
-                  笔试
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2">
+            {/* 笔试：紧凑一行组 */}
+            <div className="mt-4 rounded-xl border border-amber-400/15 bg-amber-400/[0.04] p-3">
+              <div className="mb-2 text-xs font-semibold text-amber-200/90">
+                笔试（没有可留空）
+              </div>
+              <div className="grid gap-2 sm:grid-cols-12">
+                <label className="block sm:col-span-3">
+                  <span className="admin-field-label">日期</span>
                   <input
                     type="date"
                     className="admin-input"
@@ -942,24 +1038,20 @@ export default function QiuzhaoPage() {
                       setForm({ ...form, exam_at: e.target.value })
                     }
                   />
+                </label>
+                <label className="block sm:col-span-5">
+                  <span className="admin-field-label">链接</span>
                   <input
                     className="admin-input"
-                    placeholder="笔试链接"
+                    placeholder="https://..."
                     value={form.exam_url}
                     onChange={(e) =>
                       setForm({ ...form, exam_url: e.target.value })
                     }
                   />
-                  <label className="flex items-center gap-2 text-xs text-gray-400">
-                    <input
-                      type="checkbox"
-                      checked={form.exam_done}
-                      onChange={(e) =>
-                        setForm({ ...form, exam_done: e.target.checked })
-                      }
-                    />
-                    已完成笔试
-                  </label>
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className="admin-field-label">结果</span>
                   <select
                     className="admin-input"
                     value={form.exam_result}
@@ -967,101 +1059,218 @@ export default function QiuzhaoPage() {
                       setForm({ ...form, exam_result: e.target.value })
                     }
                   >
-                    <option value="">结果未填</option>
-                    <option value="pending">待出结果</option>
+                    <option value="">未填</option>
+                    <option value="pending">待出</option>
                     <option value="pass">通过</option>
                     <option value="fail">挂了</option>
-                    <option value="skip">免笔试</option>
+                    <option value="skip">免笔</option>
                   </select>
-                </div>
+                </label>
+                <label className="flex items-end gap-2 pb-2 text-xs text-gray-400 sm:col-span-2">
+                  <input
+                    type="checkbox"
+                    checked={form.exam_done}
+                    onChange={(e) =>
+                      setForm({ ...form, exam_done: e.target.checked })
+                    }
+                  />
+                  已考完
+                </label>
               </div>
+            </div>
 
-              <div className="sm:col-span-2 rounded-xl border border-white/8 bg-black/25 p-3">
-                <div className="mb-2 text-xs font-medium text-violet-200/90">
-                  面试
+            {/* 多轮面试 */}
+            <div className="mt-3 rounded-xl border border-violet-400/15 bg-violet-400/[0.04] p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="text-xs font-semibold text-violet-200/90">
+                  面试轮次
                 </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <input
-                    className="admin-input"
-                    placeholder="轮次，如 一面 / HR"
-                    value={form.interview_round}
-                    onChange={(e) =>
-                      setForm({ ...form, interview_round: e.target.value })
-                    }
-                  />
-                  <input
-                    type="date"
-                    className="admin-input"
-                    value={form.interview_at}
-                    onChange={(e) =>
-                      setForm({ ...form, interview_at: e.target.value })
-                    }
-                  />
-                  <input
-                    className="admin-input sm:col-span-2"
-                    placeholder="面试链接（腾讯会议 / 飞书 …）"
-                    value={form.interview_url}
-                    onChange={(e) =>
-                      setForm({ ...form, interview_url: e.target.value })
-                    }
-                  />
-                  <label className="flex items-center gap-2 text-xs text-gray-400">
-                    <input
-                      type="checkbox"
-                      checked={form.interview_done}
-                      onChange={(e) =>
-                        setForm({ ...form, interview_done: e.target.checked })
-                      }
-                    />
-                    已完成面试
-                  </label>
+                <button
+                  type="button"
+                  className="admin-btn admin-btn-ghost px-2 py-1 text-[11px]"
+                  onClick={() => {
+                    const nextName =
+                      ROUND_NAMES[Math.min(rounds.length, ROUND_NAMES.length - 1)] ||
+                      `第${rounds.length + 1}面`;
+                    setRounds((prev) => [...prev, newRound(nextName)]);
+                  }}
+                >
+                  + 加一轮
+                </button>
+              </div>
+              {!rounds.length && (
+                <p className="qz-hint mb-2">还没有面试，点「加一轮」：一面 / 二面 / HR…</p>
+              )}
+              <div className="space-y-2">
+                {rounds.map((r, idx) => (
+                  <div key={r.id} className="qz-round-card">
+                    <div className="grid gap-2 sm:grid-cols-12">
+                      <label className="block sm:col-span-2">
+                        <span className="admin-field-label">轮次</span>
+                        <select
+                          className="admin-input"
+                          value={r.round}
+                          onChange={(e) =>
+                            updateRound(r.id, { round: e.target.value })
+                          }
+                        >
+                          {ROUND_NAMES.map((n) => (
+                            <option key={n} value={n}>
+                              {n}
+                            </option>
+                          ))}
+                          {!ROUND_NAMES.includes(r.round) && r.round && (
+                            <option value={r.round}>{r.round}</option>
+                          )}
+                        </select>
+                      </label>
+                      <label className="block sm:col-span-3">
+                        <span className="admin-field-label">日期</span>
+                        <input
+                          type="date"
+                          className="admin-input"
+                          value={r.at}
+                          onChange={(e) =>
+                            updateRound(r.id, { at: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="block sm:col-span-4">
+                        <span className="admin-field-label">会议链接</span>
+                        <input
+                          className="admin-input"
+                          placeholder="腾讯会议 / 飞书…"
+                          value={r.url}
+                          onChange={(e) =>
+                            updateRound(r.id, { url: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="block sm:col-span-2">
+                        <span className="admin-field-label">结果</span>
+                        <select
+                          className="admin-input"
+                          value={r.result}
+                          onChange={(e) =>
+                            updateRound(r.id, { result: e.target.value })
+                          }
+                        >
+                          <option value="">未填</option>
+                          <option value="pending">待出</option>
+                          <option value="pass">通过</option>
+                          <option value="fail">挂了</option>
+                        </select>
+                      </label>
+                      <div className="flex items-end justify-between gap-2 sm:col-span-1">
+                        <label className="flex items-center gap-1 pb-2 text-[11px] text-gray-400">
+                          <input
+                            type="checkbox"
+                            checked={r.done}
+                            onChange={(e) =>
+                              updateRound(r.id, { done: e.target.checked })
+                            }
+                          />
+                          完
+                        </label>
+                        <button
+                          type="button"
+                          className="mb-1 text-[11px] text-rose-300/80 hover:text-rose-200"
+                          onClick={() =>
+                            setRounds((prev) =>
+                              prev.filter((x) => x.id !== r.id)
+                            )
+                          }
+                          aria-label={`删除第${idx + 1}轮`}
+                        >
+                          删
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {autoNext && (
+              <p className="mt-3 rounded-lg border border-cyan-400/20 bg-cyan-400/5 px-3 py-2 text-xs text-cyan-200/90">
+                最近节点（自动）：
+                <span className="tools-mono ml-1 font-semibold">{autoNext}</span>
+                <span className="ml-2 text-cyan-200/50">
+                  由未完成的笔试/面试日期算出，不用手填
+                </span>
+              </p>
+            )}
+
+            <button
+              type="button"
+              className="mt-3 text-xs text-gray-500 underline-offset-2 hover:text-cyan-300 hover:underline"
+              onClick={() => setShowMore((v) => !v)}
+            >
+              {showMore ? "收起更多" : "更多：薪资 / JD / 备注…"}
+            </button>
+
+            {showMore && (
+              <div className="mt-2 grid gap-2.5 sm:grid-cols-2">
+                <label className="block">
+                  <span className="admin-field-label">优先级</span>
                   <select
                     className="admin-input"
-                    value={form.interview_result}
+                    value={form.priority}
                     onChange={(e) =>
-                      setForm({ ...form, interview_result: e.target.value })
+                      setForm({ ...form, priority: e.target.value })
                     }
                   >
-                    <option value="">结果未填</option>
-                    <option value="pending">待出结果</option>
-                    <option value="pass">通过</option>
-                    <option value="fail">挂了</option>
+                    {(meta?.priorities || []).map((s) => (
+                      <option key={s.key} value={s.key}>
+                        {s.label}
+                      </option>
+                    ))}
                   </select>
-                </div>
+                </label>
+                <label className="block">
+                  <span className="admin-field-label">薪资</span>
+                  <input
+                    className="admin-input"
+                    placeholder="15-25k · 16薪"
+                    value={form.salary}
+                    onChange={(e) =>
+                      setForm({ ...form, salary: e.target.value })
+                    }
+                  />
+                </label>
+                <label className="block">
+                  <span className="admin-field-label">JD 链接</span>
+                  <input
+                    className="admin-input"
+                    value={form.jd_url}
+                    onChange={(e) =>
+                      setForm({ ...form, jd_url: e.target.value })
+                    }
+                  />
+                </label>
+                <label className="block">
+                  <span className="admin-field-label">投递页</span>
+                  <input
+                    className="admin-input"
+                    value={form.apply_url}
+                    onChange={(e) =>
+                      setForm({ ...form, apply_url: e.target.value })
+                    }
+                  />
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className="admin-field-label">备注</span>
+                  <textarea
+                    className="admin-input min-h-[72px]"
+                    value={form.notes}
+                    onChange={(e) =>
+                      setForm({ ...form, notes: e.target.value })
+                    }
+                    placeholder="内推人、注意事项…"
+                  />
+                </label>
               </div>
-
-              <label className="block">
-                <span className="admin-field-label">JD 链接</span>
-                <input
-                  className="admin-input"
-                  value={form.jd_url}
-                  onChange={(e) =>
-                    setForm({ ...form, jd_url: e.target.value })
-                  }
-                />
-              </label>
-              <label className="block">
-                <span className="admin-field-label">投递页链接</span>
-                <input
-                  className="admin-input"
-                  value={form.apply_url}
-                  onChange={(e) =>
-                    setForm({ ...form, apply_url: e.target.value })
-                  }
-                />
-              </label>
-              <label className="block sm:col-span-2">
-                <span className="admin-field-label">备注</span>
-                <textarea
-                  className="admin-input min-h-[88px]"
-                  value={form.notes}
-                  onChange={(e) =>
-                    setForm({ ...form, notes: e.target.value })
-                  }
-                  placeholder="内推人、注意事项、复盘…"
-                />
-              </label>
-            </div>
+            )}
 
             <div className="mt-5 flex flex-wrap justify-end gap-2">
               {editingId && (

@@ -187,10 +187,19 @@
   color: #64748b;
 }
 
-.tools-orb {
-  pointer-events: none;
-  position: absolute;
-  border-radius: 999px;
-  filter: blur(40px);
-  opacity: 0.45;
+.tools-shell input[type="date"] {
+  color-scheme: dark;
+  min-height: 2.5rem;
+}
+
+.qz-round-card {
+  border-radius: 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(0, 0, 0, 0.28);
+  padding: 0.75rem;
+}
+
+.qz-hint {
+  font-size: 0.7rem;
+  color: #8b9bb4;
 }

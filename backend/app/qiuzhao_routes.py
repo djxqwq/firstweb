@@ -77,15 +77,38 @@ class StatusIn(BaseModel):
 
 
 def _auto_next_action(payload: QiuzhaoIn | QiuzhaoApplication) -> str:
-    """根据笔试/面试时间推算下次动作日。"""
-    existing = getattr(payload, "next_action_at", "") or ""
-    if existing:
-        return existing
-    for key in ("interview_at", "exam_at", "applied_at"):
-        val = getattr(payload, key, "") or ""
-        if val:
-            return val
-    return ""
+    """从笔试/各轮面试日期自动推算最近节点（忽略手填）。"""
+    today = datetime.now(timezone.utc).astimezone().date().isoformat()
+    candidates: list[str] = []
+
+    exam_at = getattr(payload, "exam_at", "") or ""
+    exam_done = bool(getattr(payload, "exam_done", False))
+    if exam_at and not exam_done:
+        candidates.append(exam_at[:10])
+
+    interview_at = getattr(payload, "interview_at", "") or ""
+    interview_done = bool(getattr(payload, "interview_done", False))
+    if interview_at and not interview_done:
+        candidates.append(interview_at[:10])
+
+    events = getattr(payload, "events", None)
+    if events is None and hasattr(payload, "events_json"):
+        events = _loads(getattr(payload, "events_json", None), [])
+    if isinstance(events, list):
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            if ev.get("done"):
+                continue
+            at = str(ev.get("at") or "")[:10]
+            if at:
+                candidates.append(at)
+
+    upcoming = sorted(d for d in candidates if d >= today)
+    if upcoming:
+        return upcoming[0]
+    past = sorted((d for d in candidates if d), reverse=True)
+    return past[0] if past else ""
 
 
 def _to_out(row: QiuzhaoApplication) -> dict[str, Any]:
@@ -124,8 +147,31 @@ def _to_out(row: QiuzhaoApplication) -> dict[str, Any]:
     }
 
 
+def _sync_interview_from_events(payload: QiuzhaoIn) -> None:
+    """用面试 events 回填兼容字段（列表摘要用）。"""
+    rounds = [
+        e
+        for e in (payload.events or [])
+        if isinstance(e, dict) and e.get("type", "interview") == "interview"
+    ]
+    if not rounds:
+        return
+    pending = [r for r in rounds if not r.get("done")]
+    pick = (
+        sorted(pending, key=lambda r: str(r.get("at") or "9999"))[0]
+        if pending
+        else rounds[-1]
+    )
+    payload.interview_round = str(pick.get("round") or payload.interview_round or "")
+    payload.interview_at = str(pick.get("at") or "")
+    payload.interview_url = str(pick.get("url") or "")
+    payload.interview_done = bool(pick.get("done"))
+    payload.interview_result = str(pick.get("result") or "")
+
+
 def _apply_payload(row: QiuzhaoApplication, payload: QiuzhaoIn) -> None:
     status = payload.status if payload.status in STATUSES else "wishlist"
+    _sync_interview_from_events(payload)
     row.company = (payload.company or "").strip()
     row.role = (payload.role or "").strip()
     row.city = (payload.city or "").strip()
@@ -143,7 +189,7 @@ def _apply_payload(row: QiuzhaoApplication, payload: QiuzhaoIn) -> None:
     row.interview_done = bool(payload.interview_done)
     row.interview_round = payload.interview_round or ""
     row.interview_result = payload.interview_result or ""
-    row.next_action_at = payload.next_action_at or _auto_next_action(payload)
+    row.next_action_at = _auto_next_action(payload)
     row.salary = payload.salary or ""
     row.jd_url = payload.jd_url or ""
     row.apply_url = payload.apply_url or ""
