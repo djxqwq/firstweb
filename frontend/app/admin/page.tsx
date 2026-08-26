@@ -1417,70 +1417,24 @@ export default function AdminPage() {
   if (!token) {
     return (
       <div className="admin-shell flex min-h-screen items-center justify-center px-4">
-        <form
-          onSubmit={login}
-          className="admin-card w-full max-w-md space-y-5 p-8 shadow-[0_0_60px_rgba(112,66,248,0.18)]"
-        >
-          <div className="flex items-center gap-3">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/logo.png"
-              alt=""
-              width={52}
-              height={52}
-              className="rounded-full ring-1 ring-white/15"
-            />
-            <div>
-              <h1 className="text-2xl font-semibold text-white">管理后台</h1>
-              <p className="text-sm text-gray-400">邓锦鑫 · 星空控制台</p>
-            </div>
-          </div>
-          <label className="block">
-            <span className="admin-field-label">用户名</span>
-            <input
-              className="admin-input"
-              value={user}
-              onChange={(e) => setUser(e.target.value)}
-              placeholder="用户名"
-              autoComplete="username"
-              autoFocus
-            />
-          </label>
-          <label className="block">
-            <span className="admin-field-label">密码</span>
-            <div className="relative">
-              <input
-                className="admin-input pr-16"
-                type={showPass ? "text" : "password"}
-                value={pass}
-                onChange={(e) => setPass(e.target.value)}
-                placeholder="密码"
-                autoComplete="current-password"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPass((v) => !v)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-[11px] text-gray-400 hover:text-cyan-200"
-              >
-                {showPass ? "隐藏" : "显示"}
-              </button>
-            </div>
-          </label>
-          {error && <p className="text-sm text-amber-300">{error}</p>}
-          <button
-            type="submit"
-            disabled={loading}
-            className="admin-btn admin-btn-primary w-full py-3 text-sm font-medium"
+        <div className="admin-card w-full max-w-md space-y-5 p-8 text-center shadow-[0_0_60px_rgba(112,66,248,0.18)]">
+          <h1 className="text-2xl font-semibold text-white">站点后台</h1>
+          <p className="text-sm text-gray-400">
+            请从工作台统一登录（登录一次，后台与工具通用）
+          </p>
+          <Link
+            href="/workspace?next=/admin"
+            className="admin-btn admin-btn-primary inline-flex w-full py-3 text-sm font-medium"
           >
-            {loading ? "登录中…" : "进入控制台"}
-          </button>
+            前往工作台登录
+          </Link>
           <Link
             href="/"
             className="block text-center text-sm text-cyan-300/90 hover:text-cyan-200"
           >
             ← 返回站点
           </Link>
-        </form>
+        </div>
       </div>
     );
   }
@@ -1509,6 +1463,12 @@ export default function AdminPage() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
+              <Link href="/workspace" className="admin-btn admin-btn-ghost text-xs">
+                工作台
+              </Link>
+              <Link href="/tools" className="admin-btn admin-btn-ghost text-xs">
+                我的工具
+              </Link>
               <Link href="/" className="admin-btn admin-btn-ghost text-xs">
                 查看站点
               </Link>

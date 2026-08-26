@@ -27,7 +27,7 @@ html.admin-route #site-boot-gate,
 html.admin-route,html.admin-route body{overflow:auto!important;}
 `;
 
-const ADMIN_BOOT_JS = `(function(){try{if(location.pathname.indexOf('/admin')===0){document.documentElement.classList.remove('booting');document.documentElement.classList.add('admin-route');}}catch(e){}})();`;
+const ADMIN_BOOT_JS = `(function(){try{var p=location.pathname;if(p.indexOf('/admin')===0||p.indexOf('/workspace')===0||p.indexOf('/tools')===0){document.documentElement.classList.remove('booting');document.documentElement.classList.add('admin-route');}}catch(e){}})();`;
 
 export default function RootLayout({ children }: PropsWithChildren) {
   return (

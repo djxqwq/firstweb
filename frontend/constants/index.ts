@@ -290,9 +290,9 @@ export const FOOTER_DATA = [
         link: "mailto:1075751918@qq.com",
       },
       {
-        name: "内容管理",
+        name: "工作台",
         icon: null,
-        link: "/admin",
+        link: "/workspace",
       },
     ],
   },
@@ -310,5 +310,5 @@ export const NAV_LINKS = [
 export const LINKS = {
   sourceCode: "/#intro",
   home: "/#intro",
-  admin: "/admin",
+  admin: "/workspace",
 };

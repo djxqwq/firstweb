@@ -62,10 +62,10 @@ export const Navbar = () => {
               </Link>
             ))}
             <Link
-              href="/admin"
+              href="/workspace"
               className="group relative cursor-pointer transition hover:text-cyan-200"
             >
-              管理
+              工作台
               <span className="absolute -bottom-1 left-0 h-px w-0 bg-gradient-to-r from-violet-400 to-cyan-400 transition-all group-hover:w-full" />
             </Link>
             <Link
@@ -112,6 +112,13 @@ export const Navbar = () => {
                 {link.title}
               </Link>
             ))}
+            <Link
+              href="/workspace"
+              className="cursor-pointer text-center transition hover:text-[rgb(112,66,248)]"
+              onClick={() => setIsMobileMenuOpen(false)}
+            >
+              工作台
+            </Link>
             <Link
               href="#intro"
               className="cursor-pointer text-center transition hover:text-[rgb(112,66,248)]"

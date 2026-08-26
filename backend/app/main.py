@@ -185,6 +185,42 @@ class AdminLogin(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class QiuzhaoApplication(Base):
+    """秋招投递记录 —— 仅本人工具使用，不进公开站点。"""
+
+    __tablename__ = "qiuzhao_applications"
+    id = Column(Integer, primary_key=True, index=True)
+    company = Column(String(128), nullable=False, default="", index=True)
+    role = Column(String(128), default="")
+    city = Column(String(64), default="")
+    channel = Column(String(64), default="")  # 官网 / 牛客 / 内推 …
+    track = Column(String(64), default="")  # 后端 / 前端 / 算法 …
+    status = Column(String(32), default="wishlist", index=True)
+    priority = Column(String(16), default="normal")  # low|normal|high|urgent
+    applied_at = Column(String(32), default="")  # YYYY-MM-DD
+    exam_at = Column(String(32), default="")
+    exam_url = Column(String(512), default="")
+    exam_done = Column(Boolean, default=False)
+    exam_result = Column(String(16), default="")  # pending|pass|fail|skip|""
+    interview_at = Column(String(32), default="")
+    interview_url = Column(String(512), default="")
+    interview_done = Column(Boolean, default=False)
+    interview_round = Column(String(64), default="")
+    interview_result = Column(String(16), default="")
+    next_action_at = Column(String(32), default="", index=True)
+    salary = Column(String(64), default="")
+    jd_url = Column(String(512), default="")
+    apply_url = Column(String(512), default="")
+    notes = Column(Text, default="")
+    events_json = Column(Text, default="[]")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
@@ -2479,3 +2515,9 @@ def admin_put_settings(
     row.value_json = json.dumps(current, ensure_ascii=False)
     db.commit()
     return current
+
+
+# ---- Private tools: 秋招 ----
+from app.qiuzhao_routes import router as qiuzhao_router  # noqa: E402
+
+app.include_router(qiuzhao_router)
