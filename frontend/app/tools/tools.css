@@ -36,6 +36,14 @@
   font-family: var(--font-tools-mono), ui-monospace, monospace;
 }
 
+.tools-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(64px);
+  pointer-events: none;
+  z-index: 0;
+}
+
 .tools-card {
   border-radius: 1.1rem;
   border: 1px solid var(--tools-line);
