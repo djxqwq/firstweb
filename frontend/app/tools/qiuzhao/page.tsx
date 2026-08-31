@@ -364,7 +364,7 @@ export default function QiuzhaoPage() {
       const ym = it.applied_at.slice(0, 7);
       if (counts.has(ym)) counts.set(ym, counts.get(ym)! + 1);
     }
-    const arr = months.map((m) => ({ ym, count: counts.get(m)! }));
+    const arr = months.map((m) => ({ ym: m, count: counts.get(m)! }));
     const max = Math.max(1, ...arr.map((x) => x.count));
     return { arr, max };
   }, [items]);
