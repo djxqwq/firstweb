@@ -225,6 +225,62 @@ const STATUS_STYLE: Record<string, string> = {
   closed: "bg-zinc-500/20 text-zinc-400",
 };
 
+/** 招聘流程进度 — 从投递到 Offer 的 5 步进度映射 */
+const PIPELINE: { key: StatusKey; label: string }[] = [
+  { key: "wishlist", label: "收藏" },
+  { key: "applied", label: "投递" },
+  { key: "exam", label: "笔试" },
+  { key: "interview", label: "面试" },
+  { key: "offer", label: "Offer" },
+];
+const TERMINAL = new Set(["rejected", "ghosted", "closed"]);
+
+function pipelineProgress(status: string): { pct: number; step: number } {
+  if (TERMINAL.has(status)) return { pct: 100, step: -1 };
+  const idx = PIPELINE.findIndex((s) => s.key === status);
+  if (idx < 0) return { pct: 0, step: 0 };
+  const pct = Math.round(((idx + 1) / PIPELINE.length) * 100);
+  return { pct, step: idx };
+}
+
+/** 返回近 6 个月 （YYYY-MM） 数组，从当月往前推 */
+function last6Months(): string[] {
+  const out: string[] = [];
+  const d = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const x = new Date(d.getFullYear(), d.getMonth() - i, 1);
+    out.push(`${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}`);
+  }
+  return out;
+}
+function monthShort(ym: string) {
+  const [, m] = ym.split("-");
+  return `${parseInt(m, 10)}月`;
+}
+/** 返回近 14 天的日期 ISO 字符串数组，从今天往前推 13 天 */
+function last14Days(): string[] {
+  const out: string[] = [];
+  const today = new Date();
+  const off = today.getTimezoneOffset();
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const local = new Date(d.getTime() - off * 60_000);
+    out.push(local.toISOString().slice(0, 10));
+  }
+  return out;
+}
+/** 把单条投递中的所有事件日期收集起来 */
+function collectEventDates(item: AppItem): string[] {
+  const dates: string[] = [];
+  if (item.applied_at) dates.push(item.applied_at);
+  if (item.exam_at) dates.push(item.exam_at);
+  if (item.next_action_at) dates.push(item.next_action_at);
+  if (item.interview_at) dates.push(item.interview_at);
+  for (const r of item.events || []) if (r.at) dates.push(r.at);
+  return dates;
+}
+
 export default function QiuzhaoPage() {
   const router = useRouter();
   const [token, setToken] = useState("");
@@ -297,6 +353,43 @@ export default function QiuzhaoPage() {
       .sort((a, b) =>
         (a.next_action_at || "").localeCompare(b.next_action_at || "")
       );
+  }, [items]);
+
+  // 近 6 个月投递量（按 applied_at 聚合）
+  const monthlyApplied = useMemo(() => {
+    const months = last6Months();
+    const counts = new Map<string, number>(months.map((m) => [m, 0]));
+    for (const it of items) {
+      if (!it.applied_at) continue;
+      const ym = it.applied_at.slice(0, 7);
+      if (counts.has(ym)) counts.set(ym, counts.get(ym)! + 1);
+    }
+    const arr = months.map((m) => ({ ym, count: counts.get(m)! }));
+    const max = Math.max(1, ...arr.map((x) => x.count));
+    return { arr, max };
+  }, [items]);
+
+  // 14 天事件热力图 + 分布
+  const heatmap = useMemo(() => {
+    const days = last14Days();
+    const byDayApplied = new Map<string, number>(days.map((d) => [d, 0]));
+    const byDayEvents = new Map<string, number>(days.map((d) => [d, 0]));
+    for (const it of items) {
+      if (it.applied_at && byDayApplied.has(it.applied_at)) {
+        byDayApplied.set(it.applied_at, byDayApplied.get(it.applied_at)! + 1);
+      }
+      for (const d of collectEventDates(it)) {
+        // applied_at 已经算过一次，这里不重复
+        if (d === it.applied_at) continue;
+        if (byDayEvents.has(d)) byDayEvents.set(d, byDayEvents.get(d)! + 1);
+      }
+    }
+    const levelOf = (n: number) => (n <= 0 ? 0 : n === 1 ? 1 : n === 2 ? 2 : n <= 4 ? 3 : 4);
+    return {
+      days,
+      applied: days.map((d) => ({ day: d, n: byDayApplied.get(d)!, l: levelOf(byDayApplied.get(d)!) })),
+      events: days.map((d) => ({ day: d, n: byDayEvents.get(d)!, l: levelOf(byDayEvents.get(d)!) })),
+    };
   }, [items]);
 
   const openCreate = () => {
@@ -513,6 +606,131 @@ export default function QiuzhaoPage() {
             </div>
           )}
 
+          {/* 数据可视化：状态分布 + 月度投递 + 14 天热力 */}
+          {stats && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              className="grid gap-3 lg:grid-cols-3"
+            >
+              {/* 左：状态分布条形图 */}
+              <div className="qz-viz-card">
+                <div className="qz-viz-title">
+                  <span>状态分布 STATUS MIX</span>
+                  <span className="text-[10px] tracking-normal text-gray-500">
+                    {stats.total} 条投递
+                  </span>
+                </div>
+                <div>
+                  {(meta?.statuses || [])
+                    .filter((s) => (stats.by_status?.[s.key] ?? 0) >= 0)
+                    .map((s) => {
+                      const n = stats.by_status?.[s.key] ?? 0;
+                      const pct =
+                        stats.total > 0
+                          ? Math.round((n / stats.total) * 100)
+                          : 0;
+                      return (
+                        <div className="qz-bar-row" key={s.key}>
+                          <span className="qz-bar-label">{s.label}</span>
+                          <div className="qz-bar-track">
+                            <div
+                              className="qz-bar-fill"
+                              style={{
+                                width: `${pct}%`,
+                                background: STATUS_STYLE[s.key]
+                                  ? undefined
+                                  : "",
+                              }}
+                            />
+                          </div>
+                          <span className="qz-bar-value">{n}</span>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+
+              {/* 中：近 6 个月投递柱状图 */}
+              <div className="qz-viz-card">
+                <div className="qz-viz-title">
+                  <span>月度投递 MONTHLY</span>
+                  <span className="text-[10px] tracking-normal text-gray-500">
+                    applied_at
+                  </span>
+                </div>
+                <div className="qz-month-chart">
+                  {monthlyApplied.arr.map((m) => {
+                    const h = Math.max(
+                      4,
+                      Math.round((m.count / monthlyApplied.max) * 84)
+                    );
+                    return (
+                      <div className="qz-month-col" key={m.ym}>
+                        <div
+                          className="qz-month-bar"
+                          style={{ height: `${h}px` }}
+                          data-count={m.count}
+                          title={`${m.ym} 投递 ${m.count} 家`}
+                        />
+                        <div className="qz-month-label">{monthShort(m.ym)}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 右：14 天事件热力图 */}
+              <div className="qz-viz-card">
+                <div className="qz-viz-title">
+                  <span>近 14 天节奏 14D PULSE</span>
+                  <span className="text-[10px] tracking-normal text-gray-500">
+                    今天 ← 两周前
+                  </span>
+                </div>
+                <div className="qz-heat-row">
+                  <span className="qz-heat-label">投递</span>
+                  <div className="qz-heat-track">
+                    {[...heatmap.applied]
+                      .reverse()
+                      .map((c) => (
+                        <div
+                          key={c.day}
+                          className="qz-heat-cell"
+                          data-level={c.l}
+                          title={`${c.day} 投递 ${c.n} 家`}
+                        />
+                      ))}
+                  </div>
+                </div>
+                <div className="qz-heat-row">
+                  <span className="qz-heat-label">笔面</span>
+                  <div className="qz-heat-track">
+                    {[...heatmap.events]
+                      .reverse()
+                      .map((c) => (
+                        <div
+                          key={c.day}
+                          className="qz-heat-cell"
+                          data-level={c.l}
+                          title={`${c.day} 笔面事件 ${c.n} 项`}
+                        />
+                      ))}
+                  </div>
+                </div>
+                <div className="qz-heat-axis">
+                  <span />
+                  <div className="qz-heat-axis-labels">
+                    {[...heatmap.days].reverse().map((d) => (
+                      <span key={d}>{d.slice(8)}</span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
           <div className="flex flex-wrap items-center gap-2">
             <input
               className="admin-input min-w-[160px] flex-1 py-1.5 text-sm"
@@ -613,13 +831,13 @@ export default function QiuzhaoPage() {
                       <div className="font-medium text-white">
                         {item.company}
                         {item.priority === "urgent" && (
-                          <span className="qz-priority-urgent ml-1 text-[10px]">
-                            急
+                          <span className="ml-1 inline-flex items-center gap-0.5 rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-rose-300 ring-1 ring-rose-500/30">
+                            ⚡ 急
                           </span>
                         )}
                         {item.priority === "high" && (
-                          <span className="qz-priority-high ml-1 text-[10px]">
-                            高
+                          <span className="ml-1 inline-flex items-center gap-0.5 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300 ring-1 ring-amber-500/30">
+                            ↑ 高
                           </span>
                         )}
                       </div>
@@ -628,6 +846,38 @@ export default function QiuzhaoPage() {
                         {item.city ? ` · ${item.city}` : ""}
                         {item.track ? ` · ${item.track}` : ""}
                         {item.channel ? ` · ${item.channel}` : ""}
+                      </div>
+                      {/* 招聘流程进度条 */}
+                      <div className="qz-track-wrap">
+                        <div className="qz-track-bar">
+                          <div
+                            className="qz-track-fill"
+                            style={{
+                              width: `${pipelineProgress(item.status).pct}%`,
+                              filter: TERMINAL.has(item.status)
+                                ? "saturate(0.35) brightness(0.75)"
+                                : undefined,
+                            }}
+                          />
+                        </div>
+                        <div className="qz-track-steps">
+                          {PIPELINE.map((p, pi) => {
+                            const { step } = pipelineProgress(item.status);
+                            const cls =
+                              TERMINAL.has(item.status)
+                                ? "text-rose-400/80"
+                                : pi < step
+                                  ? "done"
+                                  : pi === step
+                                    ? "active"
+                                    : "";
+                            return (
+                              <span key={p.key} className={cls}>
+                                {p.label}
+                              </span>
+                            );
+                          })}
+                        </div>
                       </div>
                     </td>
                     <td className="px-3 py-3">
@@ -806,15 +1056,38 @@ export default function QiuzhaoPage() {
                         onClick={() => openEdit(item)}
                         className="qz-kanban-card cursor-grab p-3 active:cursor-grabbing"
                       >
-                        <div className="text-sm font-semibold tracking-tight text-white">
+                        <div className="text-sm font-semibold tracking-tight text-white flex flex-wrap items-center gap-1.5">
                           {item.company}
+                          {item.priority === "urgent" && (
+                            <span className="inline-flex items-center rounded bg-rose-500/20 px-1 py-px text-[9px] font-semibold text-rose-300 ring-1 ring-rose-500/30">
+                              ⚡ 急
+                            </span>
+                          )}
+                          {item.priority === "high" && (
+                            <span className="inline-flex items-center rounded bg-amber-500/20 px-1 py-px text-[9px] font-semibold text-amber-300 ring-1 ring-amber-500/30">
+                              ↑ 高
+                            </span>
+                          )}
                         </div>
                         <div className="mt-0.5 text-[11px] text-[var(--tools-muted)]">
                           {item.role || "未填岗位"}
                         </div>
+                        {/* 卡片内迷你进度条 */}
+                        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/[0.04]">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-sky-400 via-violet-400 to-emerald-400"
+                            style={{
+                              width: `${pipelineProgress(item.status).pct}%`,
+                              filter: TERMINAL.has(item.status)
+                                ? "saturate(0.35) brightness(0.7)"
+                                : undefined,
+                              boxShadow: "0 0 6px rgba(167,139,250,0.45)",
+                            }}
+                          />
+                        </div>
                         {item.next_action_at && (
                           <div
-                            className={`tools-mono mt-2 text-[10px] ${
+                            className={`tools-mono mt-1.5 text-[10px] ${
                               isOverdue(item.next_action_at)
                                 ? "text-rose-400"
                                 : "text-cyan-400/85"

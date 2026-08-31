@@ -3,6 +3,7 @@ import { JetBrains_Mono, Syne } from "next/font/google";
 import type { PropsWithChildren } from "react";
 import { Suspense } from "react";
 
+import { ToolsStarfield } from "@/components/sub/tools-starfield";
 import "../admin/admin.css";
 import "./tools.css";
 
@@ -27,7 +28,13 @@ export const metadata: Metadata = {
 export default function ToolsLayout({ children }: PropsWithChildren) {
   return (
     <div className={`${syne.variable} ${jetbrains.variable} tools-fonts`}>
-      <Suspense fallback={null}>{children}</Suspense>
+      <Suspense fallback={null}>
+        {/* 用 fixed -z-10 挂载星空，避免与各页面 .tools-shell relative 结构打架 */}
+        <div className="pointer-events-none fixed inset-0 -z-10">
+          <ToolsStarfield />
+        </div>
+        {children}
+      </Suspense>
     </div>
   );
 }
