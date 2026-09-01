@@ -30,8 +30,6 @@ STATUSES = (
     "interview",
     "offer",
     "rejected",
-    "ghosted",
-    "closed",
 )
 
 STATUS_LABELS = {
@@ -41,8 +39,6 @@ STATUS_LABELS = {
     "interview": "面试",
     "offer": "Offer",
     "rejected": "挂了",
-    "ghosted": "已读不回",
-    "closed": "已结束",
 }
 
 

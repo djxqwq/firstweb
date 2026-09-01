@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
@@ -198,6 +198,65 @@ function todayIso() {
   return local.toISOString().slice(0, 10);
 }
 
+/** 日期自动识别：支持 2026-08-18 / 2026/08/18 / 2026\08\18 / 20260818 / 8-18 / 8/18 等格式
+ *  返回统一的 YYYY-MM-DD 字符串；无法解析返回空字符串
+ */
+function normalizeDateInput(s: string): string {
+  if (!s) return "";
+  const raw = s.trim();
+  if (!raw) return "";
+  // 去掉所有非数字字符，得到纯 8 位
+  const digits = raw.replace(/\D/g, "");
+  // 1. 完整 8 位 YYYYMMDD
+  if (digits.length === 8) {
+    const y = digits.slice(0, 4);
+    const m = digits.slice(4, 6);
+    const d = digits.slice(6, 8);
+    const full = `${y}-${m}-${d}`;
+    const dt = new Date(`${full}T00:00:00`);
+    if (!isNaN(dt.getTime()) && dt.getFullYear() === +y && dt.getMonth() + 1 === +m && dt.getDate() === +d) {
+      return full;
+    }
+  }
+  // 2. 6 位 MMDDYY（YY < 50 当 20XX，>= 50 当 19XX）
+  if (digits.length === 6) {
+    const m = digits.slice(0, 2);
+    const d = digits.slice(2, 4);
+    const yy = digits.slice(4, 6);
+    const y2 = +yy < 50 ? `20${yy}` : `19${yy}`;
+    const full = `${y2}-${m}-${d}`;
+    const dt = new Date(`${full}T00:00:00`);
+    if (!isNaN(dt.getTime()) && dt.getMonth() + 1 === +m && dt.getDate() === +d) return full;
+  }
+  // 3. 4 位 MMDD（补当前年）
+  if (digits.length === 4) {
+    const m = digits.slice(0, 2);
+    const d = digits.slice(2, 4);
+    const y = new Date().getFullYear();
+    const full = `${y}-${m}-${d}`;
+    const dt = new Date(`${full}T00:00:00`);
+    if (!isNaN(dt.getTime()) && dt.getMonth() + 1 === +m && dt.getDate() === +d) return full;
+  }
+  // 4. 带分隔符的宽松模式：替换所有 / \ . 为 - 后尝试解析
+  const norm = raw.replace(/[\\/.]/g, "-");
+  // MM-DD → 补年
+  const mmdd = norm.match(/^(\d{1,2})-(\d{1,2})$/);
+  if (mmdd) {
+    const full = `${new Date().getFullYear()}-${mmdd[1].padStart(2, "0")}-${mmdd[2].padStart(2, "0")}`;
+    const dt = new Date(`${full}T00:00:00`);
+    if (!isNaN(dt.getTime())) return full;
+  }
+  // 标准 YYYY-MM-DD 或 YYYY-M-D
+  const ymd = norm.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (ymd) {
+    return `${ymd[1]}-${ymd[2].padStart(2, "0")}-${ymd[3].padStart(2, "0")}`;
+  }
+  // YYYY-MM
+  const ym = norm.match(/^(\d{4})-(\d{1,2})$/);
+  if (ym) return `${ym[1]}-${ym[2].padStart(2, "0")}-01`;
+  return "";
+}
+
 function isOverdue(d: string) {
   return d && d < todayIso();
 }
@@ -249,7 +308,7 @@ const PIPELINE: { key: StatusKey; label: string }[] = [
   { key: "interview", label: "面试" },
   { key: "offer", label: "Offer" },
 ];
-const TERMINAL = new Set(["rejected", "ghosted", "closed"]);
+const TERMINAL = new Set(["rejected"]);
 
 /** 动态生成进度条 step：根据 rounds 把「面试」拆成 一面/二面/三面…
  *
@@ -382,6 +441,26 @@ function last14Days(): string[] {
   }
   return out;
 }
+
+/** 构建某年月的月历网格（以周日为一周开头）
+ *  返回 6 行 7 列（前导空 + 当月天数 + 补到 42 格的空）；
+ *  每个元素：{ iso: string | null, day: number, inMonth: boolean }
+ */
+function buildMonthCalendar(year: number, monthIdx0: number) {
+  const firstDay = new Date(year, monthIdx0, 1);
+  const leadingBlanks = firstDay.getDay(); // 0=周日
+  const daysInMonth = new Date(year, monthIdx0 + 1, 0).getDate();
+  const cells: { iso: string | null; day: number; inMonth: boolean }[] = [];
+  for (let i = 0; i < leadingBlanks; i++) cells.push({ iso: null, day: 0, inMonth: false });
+  for (let d = 1; d <= daysInMonth; d++) {
+    const mm = String(monthIdx0 + 1).padStart(2, "0");
+    const dd = String(d).padStart(2, "0");
+    cells.push({ iso: `${year}-${mm}-${dd}`, day: d, inMonth: true });
+  }
+  while (cells.length % 7 !== 0) cells.push({ iso: null, day: 0, inMonth: false });
+  return { year, monthIdx0, cells };
+}
+
 /** 把单条投递中的所有事件日期收集起来 */
 function collectEventDates(item: AppItem): string[] {
   const dates: string[] = [];
@@ -400,8 +479,6 @@ export default function QiuzhaoPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [view, setView] = useState<"list" | "board" | "agenda">("list");
-  const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
   const [sort, setSort] = useState("next");
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -416,10 +493,8 @@ export default function QiuzhaoPage() {
   const [dragId, setDragId] = useState<number | null>(null);
 
   const load = useCallback(async (tok: string) => {
-    const params = new URLSearchParams();
-    if (statusFilter !== "all") params.set("status", statusFilter);
-    if (q.trim()) params.set("q", q.trim());
-    params.set("sort", sort);
+    const params = new URLSearchParams({ sort });
+    // 始终拉全量，过滤在前端本地做（支持多选反选 + 月历等复杂筛选）
     const [listRes, statsRes, metaRes] = await Promise.all([
       fetch(`${API}/api/tools/qiuzhao/applications?${params}`, {
         headers: authHeaders(tok),
@@ -435,7 +510,54 @@ export default function QiuzhaoPage() {
     if (listRes.ok) setItems(await listRes.json());
     if (statsRes.ok) setStats(await statsRes.json());
     if (metaRes.ok) setMeta(await metaRes.json());
-  }, [statusFilter, q, sort, router]);
+  }, [sort, router]);
+
+  // 搜索框防抖：200ms 内不重复 re-render 整个列表
+  const [rawQ, setRawQ] = useState("");
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setQ(rawQ.trim()), 200);
+    return () => clearTimeout(t);
+  }, [rawQ]);
+
+  // 多选反选式状态筛选：默认全选；排除列表 excludeStatus 会被过滤掉
+  // 例如选中所有 status = 排除 ["ghosted","closed"]，就是反选过滤
+  const [selectedStatus, setSelectedStatus] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!meta?.statuses?.length) return;
+    const all = new Set(meta.statuses.map((s) => s.key));
+    setSelectedStatus(all); // 默认全选
+  }, [meta]);
+
+  // 月历点击选中的日期（点击月历某天 → 只看这天）；"" 表示不按日期筛
+  const [pickDate, setPickDate] = useState<string>("");
+  // 月历当前展示的年月（默认当前月）
+  const now = new Date();
+  const [calYear, setCalYear] = useState(now.getFullYear());
+  const [calMonth, setCalMonth] = useState(now.getMonth());
+
+  // ========== 所有前端本地过滤 ==========
+  const filteredItems = useMemo(() => {
+    const kw = q.toLowerCase();
+    return items.filter((it) => {
+      // 1. 关键词搜索：公司 / 岗位 / 备注
+      if (kw) {
+        const hay = `${it.company} ${it.role} ${it.notes || ""}`.toLowerCase();
+        if (!hay.includes(kw)) return false;
+      }
+      // 2. 状态多选（反选）：不在 selectedStatus 里就过滤掉
+      if (!selectedStatus.has(it.status)) return false;
+      // 3. 点击月历某天：只看这天有投递的
+      if (pickDate) {
+        const dates = new Set<string>();
+        if (it.applied_at) dates.add(it.applied_at);
+        if (it.exam_at) dates.add(it.exam_at);
+        for (const r of roundsFromItem(it)) if (r.at) dates.add(r.at);
+        if (!dates.has(pickDate)) return false;
+      }
+      return true;
+    });
+  }, [items, q, selectedStatus, pickDate]);
 
   useEffect(() => {
     const t = getToken();
@@ -462,7 +584,7 @@ export default function QiuzhaoPage() {
       .filter(
         (i) =>
           i.next_action_at &&
-          !["offer", "rejected", "ghosted", "closed"].includes(i.status)
+          !["offer","rejected"].includes(i.status)
       )
       .sort((a, b) =>
         (a.next_action_at || "").localeCompare(b.next_action_at || "")
@@ -941,52 +1063,146 @@ export default function QiuzhaoPage() {
                 </div>
               </div>
 
-              {/* 右：14 天事件热力图 */}
+              {/* 右：月历 + 点击筛选 */}
               <div className="qz-viz-card">
-                <div className="qz-viz-title">
-                  <span>近 14 天节奏 14D PULSE</span>
-                  <span className="text-[10px] tracking-normal text-gray-500">
-                    今天 ← 两周前
-                  </span>
-                </div>
-                <div className="qz-heat-row">
-                  <span className="qz-heat-label">投递</span>
-                  <div className="qz-heat-track">
-                    {[...heatmap.applied]
-                      .reverse()
-                      .map((c) => (
-                        <div
-                          key={c.day}
-                          className="qz-heat-cell"
-                          data-level={c.l}
-                          title={`${c.day} 投递 ${c.n} 家`}
-                        />
-                      ))}
+                <div className="qz-viz-title flex items-center justify-between gap-2">
+                  <span>📅 投递月历</span>
+                  <div className="flex items-center gap-1 text-[11px] text-gray-400">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (calMonth === 0) {
+                          setCalMonth(11);
+                          setCalYear(calYear - 1);
+                        } else setCalMonth(calMonth - 1);
+                      }}
+                      className="rounded border border-white/10 bg-white/[0.03] px-1.5 py-0.5 hover:text-cyan-300"
+                    >
+                      ←
+                    </button>
+                    <span className="tools-mono min-w-[72px] text-center text-gray-200">
+                      {calYear}-{String(calMonth + 1).padStart(2, "0")}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (calMonth === 11) {
+                          setCalMonth(0);
+                          setCalYear(calYear + 1);
+                        } else setCalMonth(calMonth + 1);
+                      }}
+                      className="rounded border border-white/10 bg-white/[0.03] px-1.5 py-0.5 hover:text-cyan-300"
+                    >
+                      →
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const n = new Date();
+                        setCalYear(n.getFullYear());
+                        setCalMonth(n.getMonth());
+                      }}
+                      className="ml-1 rounded border border-white/10 bg-white/[0.03] px-1.5 py-0.5 hover:text-cyan-300"
+                    >
+                      今天
+                    </button>
+                    {pickDate && (
+                      <button
+                        type="button"
+                        onClick={() => setPickDate("")}
+                        className="ml-1 rounded border border-rose-500/25 bg-rose-500/10 px-1.5 py-0.5 text-rose-300 hover:bg-rose-500/20"
+                      >
+                        清除筛选
+                      </button>
+                    )}
                   </div>
                 </div>
-                <div className="qz-heat-row">
-                  <span className="qz-heat-label">笔面</span>
-                  <div className="qz-heat-track">
-                    {[...heatmap.events]
-                      .reverse()
-                      .map((c) => (
-                        <div
-                          key={c.day}
-                          className="qz-heat-cell"
-                          data-level={c.l}
-                          title={`${c.day} 笔面事件 ${c.n} 项`}
-                        />
-                      ))}
-                  </div>
-                </div>
-                <div className="qz-heat-axis">
-                  <span />
-                  <div className="qz-heat-axis-labels">
-                    {[...heatmap.days].reverse().map((d) => (
-                      <span key={d}>{d.slice(8)}</span>
-                    ))}
-                  </div>
-                </div>
+                {(() => {
+                  const { cells } = buildMonthCalendar(calYear, calMonth);
+                  const today = todayIso();
+                  // 按天聚合事件数（投递 + 笔面）
+                  const dayCounts = new Map<string, { applied: number; events: number }>();
+                  for (const it of items) {
+                    if (it.applied_at) {
+                      const cur = dayCounts.get(it.applied_at) || { applied: 0, events: 0 };
+                      cur.applied++;
+                      dayCounts.set(it.applied_at, cur);
+                    }
+                    if (it.exam_at) {
+                      const cur = dayCounts.get(it.exam_at) || { applied: 0, events: 0 };
+                      cur.events++;
+                      dayCounts.set(it.exam_at, cur);
+                    }
+                    for (const r of roundsFromItem(it)) {
+                      if (r.at) {
+                        const cur = dayCounts.get(r.at) || { applied: 0, events: 0 };
+                        cur.events++;
+                        dayCounts.set(r.at, cur);
+                      }
+                    }
+                  }
+                  const weekdayLabels = ["日", "一", "二", "三", "四", "五", "六"];
+                  return (
+                    <div className="mt-2">
+                      <div className="grid grid-cols-7 gap-1 text-[11px] text-gray-500">
+                        {weekdayLabels.map((w) => (
+                          <div key={w} className="text-center py-0.5">{w}</div>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-7 gap-1">
+                        {cells.map((c, i) => {
+                          if (!c.iso) return <div key={i} className="h-10" />;
+                          const count = dayCounts.get(c.iso);
+                          const total = (count?.applied || 0) + (count?.events || 0);
+                          const isToday = c.iso === today;
+                          const isPicked = c.iso === pickDate;
+                          return (
+                            <button
+                              key={c.iso}
+                              type="button"
+                              onClick={() =>
+                                setPickDate(pickDate === c.iso! ? "" : c.iso!)
+                              }
+                              title={
+                                total
+                                  ? `${c.iso}：投递 ${count?.applied || 0}，笔面 ${count?.events || 0}，共 ${total} 项`
+                                  : `${c.iso} 无事件`
+                              }
+                              className={[
+                                "h-10 rounded-md relative flex flex-col items-center justify-center text-[12px] transition border",
+                                isPicked
+                                  ? "border-cyan-400 bg-cyan-400/20 text-cyan-100 shadow-[0_0_12px_rgba(34,211,238,0.35)]"
+                                  : isToday
+                                    ? "border-violet-400/40 bg-violet-400/10 text-violet-100"
+                                    : total > 0
+                                      ? "border-white/10 bg-white/[0.04] text-gray-200 hover:border-cyan-400/40 hover:bg-cyan-400/10"
+                                      : "border-transparent bg-white/[0.015] text-gray-500 hover:text-gray-300",
+                              ].join(" ")}
+                            >
+                              <span className="leading-none">{c.day}</span>
+                              {total > 0 && (
+                                <span className="mt-0.5 text-[9px] leading-none text-cyan-300/80">
+                                  {count?.applied ? "📬" : ""}
+                                  {count?.events ? "🎯" : ""}
+                                  <span className="ml-0.5 opacity-70">·{total}</span>
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="mt-2 flex items-center gap-3 text-[10px] text-gray-500">
+                        <span>📬 投递</span>
+                        <span>🎯 笔面</span>
+                        {pickDate && (
+                          <span className="ml-auto text-cyan-300">
+                            已筛选：{pickDate}（{filteredItems.length} 条）
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </motion.div>
           )}
@@ -994,22 +1210,56 @@ export default function QiuzhaoPage() {
           <div className="flex flex-wrap items-center gap-2">
             <input
               className="admin-input min-w-[160px] flex-1 py-1.5 text-sm"
-              placeholder="搜索公司 / 岗位 / 城市 / 备注"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
+              placeholder="搜索公司 / 岗位 / 备注（200ms 防抖）"
+              value={rawQ}
+              onChange={(e) => setRawQ(e.target.value)}
             />
-            <select
-              className="admin-input w-auto py-1.5 text-sm"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              <option value="all">全部状态</option>
-              {(meta?.statuses || []).map((s) => (
-                <option key={s.key} value={s.key}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
+            {/* 多选反选式状态筛选：小胶囊复选框 */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {(meta?.statuses || []).map((s) => {
+                const on = selectedStatus.has(s.key);
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => {
+                      setSelectedStatus((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(s.key)) next.delete(s.key);
+                        else next.add(s.key);
+                        return next;
+                      });
+                    }}
+                    className={[
+                      "px-2 py-1 rounded-full text-[11px] border transition",
+                      on
+                        ? "border-cyan-400/40 bg-cyan-400/15 text-cyan-100 shadow-[0_0_10px_rgba(34,211,238,0.2)]"
+                        : "border-white/5 bg-white/[0.02] text-gray-500 hover:text-gray-300 hover:bg-white/[0.05]",
+                    ].join(" ")}
+                  >
+                    {s.label}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() =>
+                  setSelectedStatus(
+                    new Set((meta?.statuses || []).map((s) => s.key))
+                  )
+                }
+                className="text-[11px] text-gray-500 hover:text-cyan-300 underline-offset-2 hover:underline"
+              >
+                全选
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedStatus(new Set())}
+                className="text-[11px] text-gray-500 hover:text-rose-300 underline-offset-2 hover:underline"
+              >
+                清空
+              </button>
+            </div>
             <select
               className="admin-input w-auto py-1.5 text-sm"
               value={sort}
@@ -1082,7 +1332,7 @@ export default function QiuzhaoPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((item) => (
+                {filteredItems.map((item) => (
                   <tr
                     key={item.id}
                     className="group border-b border-white/5 text-gray-300 hover:bg-white/[0.03]"
@@ -1122,9 +1372,9 @@ export default function QiuzhaoPage() {
                       </div>
                       <div className="text-[11px] text-gray-500">
                         <span className="text-gray-300">{item.role || "未填岗位"}</span>
-                        {item.city ? ` · ${item.city}` : ""}
-                        {item.track ? ` · ${item.track}` : ""}
-                        {item.channel ? ` · ${item.channel}` : ""}
+                        
+                        
+                        
                       </div>
                       {/* 招聘流程进度条（动态展开一轮/二轮…） */}
                       {(() => {
@@ -1368,7 +1618,7 @@ export default function QiuzhaoPage() {
                     </td>
                   </tr>
                 ))}
-                {!items.length && (
+                {!filteredItems.length && (
                   <tr>
                     <td
                       colSpan={7}
@@ -1389,7 +1639,7 @@ export default function QiuzhaoPage() {
             {KANBAN_COLS.map((col, ci) => {
               const label =
                 meta?.statuses.find((s) => s.key === col)?.label || col;
-              const colItems = items.filter((i) => i.status === col);
+              const colItems = filteredItems.filter((i) => i.status === col);
               return (
                 <motion.div
                   key={col}
@@ -1668,15 +1918,6 @@ export default function QiuzhaoPage() {
                 </datalist>
               </label>
               <label className="block sm:col-span-2">
-                <span className="admin-field-label">城市</span>
-                <input
-                  className="admin-input"
-                  placeholder="杭州"
-                  value={form.city}
-                  onChange={(e) => setForm({ ...form, city: e.target.value })}
-                />
-              </label>
-              <label className="block sm:col-span-2">
                 <span className="admin-field-label">状态</span>
                 <select
                   className="admin-input"
@@ -1696,42 +1937,6 @@ export default function QiuzhaoPage() {
                   value={form.applied_at}
                   onChange={(e) => setForm({ ...form, applied_at: e.target.value })}
                 />
-              </label>
-              <label className="block sm:col-span-3">
-                <span className="admin-field-label">渠道</span>
-                <select
-                  className="admin-input"
-                  value={form.channel}
-                  onChange={(e) => setForm({ ...form, channel: e.target.value })}
-                >
-                  {(meta?.channels || ["官网"]).map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="block sm:col-span-3">
-                <span className="admin-field-label">赛道</span>
-                <select
-                  className="admin-input"
-                  value={form.track}
-                  onChange={(e) => setForm({ ...form, track: e.target.value })}
-                >
-                  {(meta?.tracks || ["后端"]).map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="block sm:col-span-3">
-                <span className="admin-field-label">优先级</span>
-                <select
-                  className="admin-input"
-                  value={form.priority}
-                  onChange={(e) => setForm({ ...form, priority: e.target.value })}
-                >
-                  {(meta?.priorities || []).map((s) => (
-                    <option key={s.key} value={s.key}>{s.label}</option>
-                  ))}
-                </select>
               </label>
               {duplicateHint && (
                 <div className="sm:col-span-6 rounded-lg border border-rose-500/30 bg-rose-500/[0.07] px-3 py-2 text-xs text-rose-300">
@@ -1832,7 +2037,7 @@ export default function QiuzhaoPage() {
                           }
                         />
                       </label>
-                      <label className="block sm:col-span-3">
+                      <label className="block sm:col-span-6">
                         <span className="admin-field-label">
                           🚀 官网投递链接
                         </span>
@@ -1842,39 +2047,6 @@ export default function QiuzhaoPage() {
                           value={rd.apply_url}
                           onChange={(e) =>
                             updateRoleEntry(idx, { apply_url: e.target.value })
-                          }
-                        />
-                      </label>
-                      <label className="block sm:col-span-3">
-                        <span className="admin-field-label">JD 链接</span>
-                        <input
-                          className="admin-input"
-                          placeholder="岗位描述页面"
-                          value={rd.jd_url}
-                          onChange={(e) =>
-                            updateRoleEntry(idx, { jd_url: e.target.value })
-                          }
-                        />
-                      </label>
-                      <label className="block sm:col-span-3">
-                        <span className="admin-field-label">薪资</span>
-                        <input
-                          className="admin-input"
-                          placeholder="15-25k · 16薪"
-                          value={rd.salary}
-                          onChange={(e) =>
-                            updateRoleEntry(idx, { salary: e.target.value })
-                          }
-                        />
-                      </label>
-                      <label className="block sm:col-span-6">
-                        <span className="admin-field-label">备注</span>
-                        <textarea
-                          className="admin-input min-h-[56px]"
-                          placeholder="内推人、注意事项…"
-                          value={rd.notes}
-                          onChange={(e) =>
-                            updateRoleEntry(idx, { notes: e.target.value })
                           }
                         />
                       </label>
@@ -2095,3 +2267,7 @@ export default function QiuzhaoPage() {
     </div>
   );
 }
+
+
+
+
