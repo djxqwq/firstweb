@@ -1681,16 +1681,6 @@ export default function QiuzhaoPage() {
                               ×{companyCountMap.get(item.company.trim())}
                             </span>
                           )}
-                          {item.priority === "urgent" && (
-                            <span className="inline-flex items-center rounded bg-rose-500/20 px-1 py-px text-[9px] font-semibold text-rose-300 ring-1 ring-rose-500/30">
-                              ⚡ 急
-                            </span>
-                          )}
-                          {item.priority === "high" && (
-                            <span className="inline-flex items-center rounded bg-amber-500/20 px-1 py-px text-[9px] font-semibold text-amber-300 ring-1 ring-amber-500/30">
-                              ↑ 高
-                            </span>
-                          )}
                         </div>
                         <div className="mt-0.5 text-[11px] text-[var(--tools-muted)]">
                           {item.role || "未填岗位"}
@@ -1699,7 +1689,7 @@ export default function QiuzhaoPage() {
                         {(() => {
                           const rs = roundsFromItem(item);
                           const nextMeeting = rs.find((r) => r.url && !r.done) || rs.find((r) => r.url);
-                          const anyLink = item.apply_url || item.jd_url || item.exam_url || nextMeeting?.url;
+                          const anyLink = item.apply_url || item.exam_url || nextMeeting?.url;
                           if (!anyLink) return null;
                           const chip =
                             "inline-flex h-5 items-center gap-0.5 rounded border px-1 text-[9px] transition active:scale-95";
@@ -1716,20 +1706,7 @@ export default function QiuzhaoPage() {
                                 >
                                   🚀投递
                                 </a>
-                              )}
-                              {item.jd_url && (
-                                <a
-                                  href={item.jd_url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  title="JD 页面"
-                                  className={`${chip} border-emerald-400/20 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20 hover:text-white`}
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  📄JD
-                                </a>
-                              )}
-                              {item.exam_url && (
+                              )}                              {item.exam_url && (
                                 <a
                                   href={item.exam_url}
                                   target="_blank"
@@ -1932,7 +1909,7 @@ export default function QiuzhaoPage() {
               <label className="block sm:col-span-2">
                 <span className="admin-field-label">投递日期</span>
                 <input
-                  type="date"
+                  type="date" readOnly
                   className="admin-input"
                   value={form.applied_at}
                   onChange={(e) => setForm({ ...form, applied_at: e.target.value })}
@@ -2061,7 +2038,7 @@ export default function QiuzhaoPage() {
                         <label className="block sm:col-span-3">
                           <span className="admin-field-label">日期</span>
                           <input
-                            type="date"
+                            type="date" readOnly
                             className="admin-input"
                             value={rd.exam_at}
                             onChange={(e) =>
@@ -2158,7 +2135,7 @@ export default function QiuzhaoPage() {
                               <label className="block sm:col-span-3">
                                 <span className="admin-field-label">日期</span>
                                 <input
-                                  type="date"
+                                  type="date" readOnly
                                   className="admin-input"
                                   value={r.at}
                                   onChange={(e) =>
@@ -2267,6 +2244,7 @@ export default function QiuzhaoPage() {
     </div>
   );
 }
+
 
 
 
