@@ -392,9 +392,55 @@ export default function QiuzhaoPage() {
     };
   }, [items]);
 
-  const openCreate = () => {
+  // 已有公司名列表（用于添加表单的 datalist 快速选）
+  const distinctCompanies = useMemo(() => {
+    const seen = new Map<string, number>();
+    for (const it of items) {
+      const c = (it.company || "").trim();
+      if (!c) continue;
+      seen.set(c, (seen.get(c) || 0) + 1);
+    }
+    return Array.from(seen.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([name, count]) => ({ name, count }));
+  }, [items]);
+
+  // 检测「相同公司 + 相同岗位」是否已存在（软提示，不阻断）
+  const duplicateHint = useMemo(() => {
+    const c = (form.company || "").trim();
+    const r = (form.role || "").trim();
+    if (!c || !r) return "";
+    const same = items.find(
+      (it) =>
+        it.company.trim() === c &&
+        it.role.trim() === r &&
+        (editingId ? it.id !== editingId : true)
+    );
+    if (same) {
+      return `⚠️ 已存在相同公司+岗位：${same.company} · ${same.role}（${same.status}）`;
+    }
+    return "";
+  }, [form.company, form.role, items, editingId]);
+
+  // 同公司多岗位计数，用于列表 ×N 徽章
+  const companyCountMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const it of items) {
+      const c = (it.company || "").trim();
+      if (!c) continue;
+      m.set(c, (m.get(c) || 0) + 1);
+    }
+    return m;
+  }, [items]);
+
+  const openCreate = (prefillCompany = "") => {
     setEditingId(null);
-    setForm({ ...EMPTY_FORM, applied_at: todayIso(), status: "applied" });
+    setForm({
+      ...EMPTY_FORM,
+      company: prefillCompany,
+      applied_at: todayIso(),
+      status: "applied",
+    });
     setRounds([]);
     setShowMore(false);
     setFormOpen(true);
@@ -543,11 +589,11 @@ export default function QiuzhaoPage() {
               </Link>
               <button
                 type="button"
-                onClick={openCreate}
+                onClick={() => openCreate()}
                 className="admin-btn admin-btn-primary text-xs"
               >
                 <HiOutlinePlus className="mr-1 inline h-3.5 w-3.5" />
-                添加公司
+                添加投递
               </button>
             </div>
           </div>
@@ -812,7 +858,7 @@ export default function QiuzhaoPage() {
             <table className="min-w-full text-left text-sm">
               <thead className="border-b border-white/10 text-xs text-gray-500">
                 <tr>
-                  <th className="px-3 py-2.5">公司 / 岗位</th>
+                  <th className="px-3 py-2.5">公司 · 岗位</th>
                   <th className="px-3 py-2.5">状态</th>
                   <th className="px-3 py-2.5">投递日</th>
                   <th className="px-3 py-2.5">笔试</th>
@@ -825,11 +871,30 @@ export default function QiuzhaoPage() {
                 {items.map((item) => (
                   <tr
                     key={item.id}
-                    className="border-b border-white/5 text-gray-300 hover:bg-white/[0.03]"
+                    className="group border-b border-white/5 text-gray-300 hover:bg-white/[0.03]"
                   >
                     <td className="px-3 py-3">
-                      <div className="font-medium text-white">
-                        {item.company}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-medium text-white">
+                          {item.company}
+                        </span>
+                        {(companyCountMap.get(item.company.trim()) || 0) > 1 && (
+                          <span
+                            title={`${item.company} 共有 ${companyCountMap.get(item.company.trim())} 个岗位在投`}
+                            className="inline-flex h-5 items-center rounded-full border border-cyan-400/30 bg-cyan-400/10 px-1.5 text-[10px] font-semibold text-cyan-300"
+                          >
+                            ×{companyCountMap.get(item.company.trim())}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          title={`为 ${item.company} 再加一个岗位投递`}
+                          onClick={() => openCreate(item.company)}
+                          className="inline-flex h-5 items-center gap-0.5 rounded-full border border-emerald-400/25 bg-emerald-400/10 px-1.5 text-[10px] font-semibold text-emerald-300 opacity-0 transition group-hover:opacity-100 hover:bg-emerald-400/20"
+                        >
+                          <HiOutlinePlus className="h-2.5 w-2.5" />
+                          新岗位
+                        </button>
                         {item.priority === "urgent" && (
                           <span className="ml-1 inline-flex items-center gap-0.5 rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-rose-300 ring-1 ring-rose-500/30">
                             ⚡ 急
@@ -842,7 +907,7 @@ export default function QiuzhaoPage() {
                         )}
                       </div>
                       <div className="text-[11px] text-gray-500">
-                        {item.role || "—"}
+                        <span className="text-gray-300">{item.role || "未填岗位"}</span>
                         {item.city ? ` · ${item.city}` : ""}
                         {item.track ? ` · ${item.track}` : ""}
                         {item.channel ? ` · ${item.channel}` : ""}
@@ -1010,7 +1075,7 @@ export default function QiuzhaoPage() {
                       colSpan={7}
                       className="px-3 py-10 text-center text-gray-500"
                     >
-                      还没有记录，点右上角「添加公司」
+                      还没有记录，点右上角「添加投递」
                     </td>
                   </tr>
                 )}
@@ -1058,6 +1123,15 @@ export default function QiuzhaoPage() {
                       >
                         <div className="text-sm font-semibold tracking-tight text-white flex flex-wrap items-center gap-1.5">
                           {item.company}
+                          {(companyCountMap.get(item.company.trim()) || 0) > 1 && (
+                            <span
+                              title={`${item.company} 共有 ${companyCountMap.get(item.company.trim())} 个岗位在投`}
+                              className="inline-flex h-4.5 items-center rounded-full border border-cyan-400/30 bg-cyan-400/10 px-1.5 text-[9px] font-semibold text-cyan-300"
+                              style={{ height: 18 }}
+                            >
+                              ×{companyCountMap.get(item.company.trim())}
+                            </span>
+                          )}
                           {item.priority === "urgent" && (
                             <span className="inline-flex items-center rounded bg-rose-500/20 px-1 py-px text-[9px] font-semibold text-rose-300 ring-1 ring-rose-500/30">
                               ⚡ 急
@@ -1188,10 +1262,10 @@ export default function QiuzhaoPage() {
             <div className="mb-3 flex items-center justify-between gap-2">
               <div>
                 <h2 className="text-lg font-semibold tracking-tight text-white">
-                  {editingId ? "编辑公司" : "添加公司"}
+                  {editingId ? "编辑投递" : "添加投递"}
                 </h2>
                 <p className="qz-hint mt-0.5">
-                  先填基本信息，笔试/面试按需添加 · 日期点右侧日历选
+                  同一公司可添加多个不同岗位 · 笔试/面试按需填
                 </p>
               </div>
               <button
@@ -1208,25 +1282,39 @@ export default function QiuzhaoPage() {
               <label className="block sm:col-span-3">
                 <span className="admin-field-label">公司 *</span>
                 <input
+                  list="qz-company-list"
                   className="admin-input"
                   required
                   autoFocus
-                  placeholder="如：字节跳动"
+                  placeholder="如：字节跳动（支持下拉选已有公司）"
                   value={form.company}
                   onChange={(e) =>
                     setForm({ ...form, company: e.target.value })
                   }
                 />
+                <datalist id="qz-company-list">
+                  {distinctCompanies.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.name}（×{c.count}）
+                    </option>
+                  ))}
+                </datalist>
               </label>
               <label className="block sm:col-span-3">
-                <span className="admin-field-label">岗位</span>
+                <span className="admin-field-label">岗位 *</span>
                 <input
                   className="admin-input"
-                  placeholder="如：后端开发"
+                  required
+                  placeholder="如：后端开发 / 客户端 / Java 开发"
                   value={form.role}
                   onChange={(e) => setForm({ ...form, role: e.target.value })}
                 />
               </label>
+              {duplicateHint && (
+                <div className="sm:col-span-6 rounded-lg border border-rose-500/30 bg-rose-500/[0.07] px-3 py-2 text-xs text-rose-300">
+                  {duplicateHint}（仍然可保存，系统不会限制你）
+                </div>
+              )}
               <label className="block sm:col-span-2">
                 <span className="admin-field-label">城市</span>
                 <input
