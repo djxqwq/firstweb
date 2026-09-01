@@ -1909,10 +1909,16 @@ export default function QiuzhaoPage() {
               <label className="block sm:col-span-2">
                 <span className="admin-field-label">投递日期</span>
                 <input
-                  type="date" readOnly
+                  type="text"
                   className="admin-input"
+                  placeholder="如 2026-08-18 / 2026/08/18 / 8-18"
                   value={form.applied_at}
-                  onChange={(e) => setForm({ ...form, applied_at: e.target.value })}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      applied_at: normalizeDateInput(e.target.value),
+                    })
+                  }
                 />
               </label>
               {duplicateHint && (
@@ -2038,11 +2044,14 @@ export default function QiuzhaoPage() {
                         <label className="block sm:col-span-3">
                           <span className="admin-field-label">日期</span>
                           <input
-                            type="date" readOnly
+                            type="text"
                             className="admin-input"
+                            placeholder="2026-08-18 / 2026/08/18"
                             value={rd.exam_at}
                             onChange={(e) =>
-                              updateRoleEntry(idx, { exam_at: e.target.value })
+                              updateRoleEntry(idx, {
+                                exam_at: normalizeDateInput(e.target.value),
+                              })
                             }
                           />
                         </label>
@@ -2135,11 +2144,14 @@ export default function QiuzhaoPage() {
                               <label className="block sm:col-span-3">
                                 <span className="admin-field-label">日期</span>
                                 <input
-                                  type="date" readOnly
+                                  type="text"
                                   className="admin-input"
+                                  placeholder="2026-08-18 / 2026/08/18"
                                   value={r.at}
                                   onChange={(e) =>
-                                    updateRound(idx, r.id, { at: e.target.value })
+                                    updateRound(idx, r.id, {
+                                      at: normalizeDateInput(e.target.value),
+                                    })
                                   }
                                 />
                               </label>
