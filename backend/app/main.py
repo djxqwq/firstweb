@@ -22,7 +22,7 @@ from typing import Any, Optional
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from jose import JWTError, jwt
@@ -67,14 +67,23 @@ UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-# TiDB Cloud / MySQL 强制 SSL
+# TiDB Cloud / MySQL 强制 SSL + 连接超时 10s（防空洞连接挂起）
 if DATABASE_URL.startswith("mysql"):
     import ssl as _ssl
     _ssl_ctx = _ssl.create_default_context()
     _ssl_ctx.check_hostname = False
     _ssl_ctx.verify_mode = _ssl.CERT_NONE
-    connect_args = {"ssl": _ssl_ctx}
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600, connect_args=connect_args)
+    connect_args = {"ssl": _ssl_ctx, "connect_timeout": 10}
+# pool_recycle=300：5 分钟回收，远小于 TiDB Cloud 空闲超时，防死连接
+# pool_size=2 + max_overflow=3：每个 worker 最多 5 连接，4 worker=20 总量
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=300,
+    pool_size=2,
+    max_overflow=3,
+    connect_args=connect_args,
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -778,8 +787,15 @@ def _lookup_visitor_note(
 
 # ---- Public ----
 @app.get("/api/health")
-def health():
-    return {"ok": True, "db": DATABASE_URL.split("://")[0]}
+def health(db: Session = Depends(get_db)):
+    try:
+        db.execute(sqlalchemy_text("SELECT 1"))
+        return {"ok": True, "db": DATABASE_URL.split("://")[0]}
+    except Exception:
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "db": DATABASE_URL.split("://")[0], "error": "database unreachable"},
+        )
 
 
 @app.get("/api/profile")
