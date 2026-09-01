@@ -69,22 +69,46 @@ type InterviewRound = {
 
 type FormState = {
   company: string;
-  role: string;
+  // role / exam / jd / apply_url / salary / notes 等岗位独有的字段改放到 roleDrafts[]
   city: string;
   channel: string;
   track: string;
   status: string;
   priority: string;
   applied_at: string;
+};
+
+/** 单岗位草稿：每个岗位独立维护自己的名称、投递链接、笔面、薪资、备注 */
+type RoleDraft = {
+  _uid: string;
+  role: string;
+  apply_url: string;
+  jd_url: string;
+  salary: string;
+  notes: string;
   exam_at: string;
   exam_url: string;
   exam_done: boolean;
   exam_result: string;
-  salary: string;
-  jd_url: string;
-  apply_url: string;
-  notes: string;
+  rounds: InterviewRound[];
 };
+
+const uid = () =>
+  `rd-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
+const emptyRoleDraft = (role = ""): RoleDraft => ({
+  _uid: uid(),
+  role,
+  apply_url: "",
+  jd_url: "",
+  salary: "",
+  notes: "",
+  exam_at: "",
+  exam_url: "",
+  exam_done: false,
+  exam_result: "",
+  rounds: [],
+});
 
 type Stats = {
   total: number;
@@ -109,21 +133,12 @@ const ROUND_NAMES = ["一面", "二面", "三面", "HR面", "终面", "其他"];
 
 const EMPTY_FORM: FormState = {
   company: "",
-  role: "",
   city: "",
   channel: "官网",
   track: "后端",
   status: "applied",
   priority: "normal",
   applied_at: "",
-  exam_at: "",
-  exam_url: "",
-  exam_done: false,
-  exam_result: "",
-  salary: "",
-  jd_url: "",
-  apply_url: "",
-  notes: "",
 };
 
 function newRound(name = "一面"): InterviewRound {
@@ -199,12 +214,13 @@ function isSoon(d: string) {
 }
 
 function previewNextAction(
-  form: FormState,
+  exam_at: string | undefined,
+  exam_done: boolean | undefined,
   rounds: InterviewRound[]
 ): string {
   const today = todayIso();
   const dates: string[] = [];
-  if (form.exam_at && !form.exam_done) dates.push(form.exam_at);
+  if (exam_at && !exam_done) dates.push(exam_at);
   for (const r of rounds) {
     if (r.at && !r.done) dates.push(r.at);
   }
@@ -294,8 +310,10 @@ export default function QiuzhaoPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
-  const [rounds, setRounds] = useState<InterviewRound[]>([]);
-  const [showMore, setShowMore] = useState(false);
+  // 多岗位条目：每个岗位自己的名称、投递链接、笔面、薪资、备注、面试轮次
+  const [roleDrafts, setRoleDrafts] = useState<RoleDraft[]>([emptyRoleDraft()]);
+  // 当前正在编辑的岗位下标，用于「岗位 1/N」计数和激活条
+  const [activeRole, setActiveRole] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [okMsg, setOkMsg] = useState("");
@@ -406,9 +424,11 @@ export default function QiuzhaoPage() {
   }, [items]);
 
   // 检测「相同公司 + 相同岗位」是否已存在（软提示，不阻断）
+  // 只对当前激活的岗位做重复检测
   const duplicateHint = useMemo(() => {
     const c = (form.company || "").trim();
-    const r = (form.role || "").trim();
+    const activeRoleDraft = roleDrafts[activeRole];
+    const r = (activeRoleDraft?.role || "").trim();
     if (!c || !r) return "";
     const same = items.find(
       (it) =>
@@ -420,7 +440,7 @@ export default function QiuzhaoPage() {
       return `⚠️ 已存在相同公司+岗位：${same.company} · ${same.role}（${same.status}）`;
     }
     return "";
-  }, [form.company, form.role, items, editingId]);
+  }, [form.company, roleDrafts, activeRole, items, editingId]);
 
   // 同公司多岗位计数，用于列表 ×N 徽章
   const companyCountMap = useMemo(() => {
@@ -441,82 +461,180 @@ export default function QiuzhaoPage() {
       applied_at: todayIso(),
       status: "applied",
     });
-    setRounds([]);
-    setShowMore(false);
+    // 新建时默认 1 条空岗位草稿
+    setRoleDrafts([emptyRoleDraft()]);
+    setActiveRole(0);
     setFormOpen(true);
   };
 
   const openEdit = (item: AppItem) => {
     setEditingId(item.id);
+    // 共享字段放到 form，岗位独有字段放到单条 RoleDraft
     setForm({
       company: item.company,
-      role: item.role,
       city: item.city,
       channel: item.channel,
       track: item.track,
       status: item.status,
       priority: item.priority,
       applied_at: item.applied_at,
-      exam_at: item.exam_at,
-      exam_url: item.exam_url,
-      exam_done: item.exam_done,
-      exam_result: item.exam_result,
-      salary: item.salary,
-      jd_url: item.jd_url,
-      apply_url: item.apply_url,
-      notes: item.notes,
     });
-    setRounds(roundsFromItem(item));
-    setShowMore(Boolean(item.salary || item.jd_url || item.apply_url || item.notes));
+    setRoleDrafts([
+      {
+        _uid: uid(),
+        role: item.role,
+        apply_url: item.apply_url || "",
+        jd_url: item.jd_url || "",
+        salary: item.salary || "",
+        notes: item.notes || "",
+        exam_at: item.exam_at || "",
+        exam_url: item.exam_url || "",
+        exam_done: Boolean(item.exam_done),
+        exam_result: item.exam_result || "",
+        rounds: roundsFromItem(item),
+      },
+    ]);
+    setActiveRole(0);
     setFormOpen(true);
+  };
+
+  /* ============ 岗位条目增删改 ============ */
+  const addRoleEntry = () => {
+    setRoleDrafts((prev) => [...prev, emptyRoleDraft()]);
+    setActiveRole(roleDrafts.length);
+  };
+  const removeRoleEntry = (idx: number) => {
+    if (roleDrafts.length <= 1) return; // 至少保留 1 条
+    setRoleDrafts((prev) => prev.filter((_, i) => i !== idx));
+    setActiveRole((cur) => Math.min(cur, roleDrafts.length - 2));
+  };
+  const updateRoleEntry = (idx: number, patch: Partial<RoleDraft>) => {
+    setRoleDrafts((prev) =>
+      prev.map((r, i) => (i === idx ? { ...r, ...patch } : r))
+    );
+  };
+  const updateRound = (idx: number, id: string, patch: Partial<InterviewRound>) => {
+    setRoleDrafts((prev) =>
+      prev.map((r, i) =>
+        i === idx
+          ? {
+              ...r,
+              rounds: r.rounds.map((x) => (x.id === id ? { ...x, ...patch } : x)),
+            }
+          : r
+      )
+    );
+  };
+  const addRound = (idx: number, name = "一面") => {
+    setRoleDrafts((prev) =>
+      prev.map((r, i) =>
+        i === idx ? { ...r, rounds: [...r.rounds, newRound(name)] } : r
+      )
+    );
+  };
+  const removeRound = (idx: number, id: string) => {
+    setRoleDrafts((prev) =>
+      prev.map((r, i) =>
+        i === idx ? { ...r, rounds: r.rounds.filter((x) => x.id !== id) } : r
+      )
+    );
   };
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
     if (!token) return;
+    // 校验：所有岗位名称必填
+    const empty = roleDrafts.findIndex((r) => !(r.role || "").trim());
+    if (empty >= 0) {
+      setError(`第 ${empty + 1} 号岗位名称必填`);
+      return;
+    }
     setSaving(true);
     setError("");
     try {
-      const payload = {
-        ...form,
-        next_action_at: "",
-        interview_at: "",
-        interview_url: "",
-        interview_done: false,
-        interview_round: "",
-        interview_result: "",
-        events: rounds,
-      };
-      const url = editingId
-        ? `${API}/api/tools/qiuzhao/applications/${editingId}`
-        : `${API}/api/tools/qiuzhao/applications`;
-      const res = await fetch(url, {
-        method: editingId ? "PUT" : "POST",
-        headers: authHeaders(token),
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setError(
-          typeof body.detail === "string" ? body.detail : `保存失败 ${res.status}`
-        );
-        return;
+      if (editingId) {
+        // 编辑模式：单条 PUT，取第 0 条岗位草稿
+        const rd = roleDrafts[0];
+        const payload = {
+          ...form,
+          role: rd.role,
+          apply_url: rd.apply_url,
+          jd_url: rd.jd_url,
+          salary: rd.salary,
+          notes: rd.notes,
+          exam_at: rd.exam_at,
+          exam_url: rd.exam_url,
+          exam_done: rd.exam_done,
+          exam_result: rd.exam_result,
+          next_action_at: "",
+          interview_at: "",
+          interview_url: "",
+          interview_done: false,
+          interview_round: "",
+          interview_result: "",
+          events: rd.rounds,
+        };
+        const url = `${API}/api/tools/qiuzhao/applications/${editingId}`;
+        const res = await fetch(url, {
+          method: "PUT",
+          headers: authHeaders(token),
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          setError(typeof body.detail === "string" ? body.detail : `保存失败 ${res.status}`);
+          return;
+        }
+        setOkMsg("已更新");
+        setFormOpen(false);
+      } else {
+        // 新建模式：多条 POST，每个岗位 1 条
+        let failed = 0;
+        for (let i = 0; i < roleDrafts.length; i++) {
+          const rd = roleDrafts[i];
+          const payload = {
+            ...form,
+            role: rd.role,
+            apply_url: rd.apply_url,
+            jd_url: rd.jd_url,
+            salary: rd.salary,
+            notes: rd.notes,
+            exam_at: rd.exam_at,
+            exam_url: rd.exam_url,
+            exam_done: rd.exam_done,
+            exam_result: rd.exam_result,
+            next_action_at: "",
+            interview_at: "",
+            interview_url: "",
+            interview_done: false,
+            interview_round: "",
+            interview_result: "",
+            events: rd.rounds,
+          };
+          const res = await fetch(`${API}/api/tools/qiuzhao/applications`, {
+            method: "POST",
+            headers: authHeaders(token),
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) failed++;
+        }
+        const okCount = roleDrafts.length - failed;
+        if (failed === 0) {
+          setOkMsg(`已添加 ${okCount} 条投递`);
+          setFormOpen(false);
+        } else {
+          setError(`部分失败：成功 ${okCount}，失败 ${failed}`);
+        }
       }
-      setOkMsg(editingId ? "已更新" : "已添加");
-      setFormOpen(false);
       await load(token);
     } finally {
       setSaving(false);
     }
   };
 
-  const updateRound = (id: string, patch: Partial<InterviewRound>) => {
-    setRounds((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, ...patch } : r))
-    );
-  };
-
-  const autoNext = previewNextAction(form, rounds);
+  // 预览「下一个节点」——取当前激活岗位的笔试/面试轮次
+  const cur = roleDrafts[activeRole];
+  const autoNext = previewNextAction(cur?.exam_at, cur?.exam_done, cur?.rounds || []);
 
   const remove = async (id: number) => {
     if (!token || !confirm("确认删除这条投递？")) return;
@@ -1277,7 +1395,7 @@ export default function QiuzhaoPage() {
               </button>
             </div>
 
-            {/* 首屏：一眼看完 */}
+            {/* ========= 共享信息：公司 + 通用字段 ========= */}
             <div className="grid gap-2.5 sm:grid-cols-6">
               <label className="block sm:col-span-3">
                 <span className="admin-field-label">公司 *</span>
@@ -1300,21 +1418,6 @@ export default function QiuzhaoPage() {
                   ))}
                 </datalist>
               </label>
-              <label className="block sm:col-span-3">
-                <span className="admin-field-label">岗位 *</span>
-                <input
-                  className="admin-input"
-                  required
-                  placeholder="如：后端开发 / 客户端 / Java 开发"
-                  value={form.role}
-                  onChange={(e) => setForm({ ...form, role: e.target.value })}
-                />
-              </label>
-              {duplicateHint && (
-                <div className="sm:col-span-6 rounded-lg border border-rose-500/30 bg-rose-500/[0.07] px-3 py-2 text-xs text-rose-300">
-                  {duplicateHint}（仍然可保存，系统不会限制你）
-                </div>
-              )}
               <label className="block sm:col-span-2">
                 <span className="admin-field-label">城市</span>
                 <input
@@ -1329,14 +1432,10 @@ export default function QiuzhaoPage() {
                 <select
                   className="admin-input"
                   value={form.status}
-                  onChange={(e) =>
-                    setForm({ ...form, status: e.target.value })
-                  }
+                  onChange={(e) => setForm({ ...form, status: e.target.value })}
                 >
                   {(meta?.statuses || []).map((s) => (
-                    <option key={s.key} value={s.key}>
-                      {s.label}
-                    </option>
+                    <option key={s.key} value={s.key}>{s.label}</option>
                   ))}
                 </select>
               </label>
@@ -1346,9 +1445,7 @@ export default function QiuzhaoPage() {
                   type="date"
                   className="admin-input"
                   value={form.applied_at}
-                  onChange={(e) =>
-                    setForm({ ...form, applied_at: e.target.value })
-                  }
+                  onChange={(e) => setForm({ ...form, applied_at: e.target.value })}
                 />
               </label>
               <label className="block sm:col-span-3">
@@ -1356,14 +1453,10 @@ export default function QiuzhaoPage() {
                 <select
                   className="admin-input"
                   value={form.channel}
-                  onChange={(e) =>
-                    setForm({ ...form, channel: e.target.value })
-                  }
+                  onChange={(e) => setForm({ ...form, channel: e.target.value })}
                 >
                   {(meta?.channels || ["官网"]).map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
+                    <option key={c} value={c}>{c}</option>
                   ))}
                 </select>
               </label>
@@ -1375,262 +1468,347 @@ export default function QiuzhaoPage() {
                   onChange={(e) => setForm({ ...form, track: e.target.value })}
                 >
                   {(meta?.tracks || ["后端"]).map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
+                    <option key={c} value={c}>{c}</option>
                   ))}
                 </select>
               </label>
+              <label className="block sm:col-span-3">
+                <span className="admin-field-label">优先级</span>
+                <select
+                  className="admin-input"
+                  value={form.priority}
+                  onChange={(e) => setForm({ ...form, priority: e.target.value })}
+                >
+                  {(meta?.priorities || []).map((s) => (
+                    <option key={s.key} value={s.key}>{s.label}</option>
+                  ))}
+                </select>
+              </label>
+              {duplicateHint && (
+                <div className="sm:col-span-6 rounded-lg border border-rose-500/30 bg-rose-500/[0.07] px-3 py-2 text-xs text-rose-300">
+                  {duplicateHint}（仍然可保存，不会限制你）
+                </div>
+              )}
             </div>
 
-            {/* 笔试：紧凑一行组 */}
-            <div className="mt-4 rounded-xl border border-amber-400/15 bg-amber-400/[0.04] p-3">
-              <div className="mb-2 text-xs font-semibold text-amber-200/90">
-                笔试（没有可留空）
-              </div>
-              <div className="grid gap-2 sm:grid-cols-12">
-                <label className="block sm:col-span-3">
-                  <span className="admin-field-label">日期</span>
-                  <input
-                    type="date"
-                    className="admin-input"
-                    value={form.exam_at}
-                    onChange={(e) =>
-                      setForm({ ...form, exam_at: e.target.value })
-                    }
-                  />
-                </label>
-                <label className="block sm:col-span-5">
-                  <span className="admin-field-label">链接</span>
-                  <input
-                    className="admin-input"
-                    placeholder="https://..."
-                    value={form.exam_url}
-                    onChange={(e) =>
-                      setForm({ ...form, exam_url: e.target.value })
-                    }
-                  />
-                </label>
-                <label className="block sm:col-span-2">
-                  <span className="admin-field-label">结果</span>
-                  <select
-                    className="admin-input"
-                    value={form.exam_result}
-                    onChange={(e) =>
-                      setForm({ ...form, exam_result: e.target.value })
+            {/* ========= 岗位条目：支持 1~N ========= */}
+            <div className="mt-4 rounded-2xl border border-cyan-400/20 bg-slate-950/40 p-3">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2.5 py-1 font-mono text-xs font-semibold text-cyan-200">
+                    岗位
+                    <span className="text-white/95">
+                      {roleDrafts.length === 1
+                        ? "1"
+                        : `${activeRole + 1}/${roleDrafts.length}`}
+                    </span>
+                  </span>
+                  <span className="qz-hint">
+                    同一家公司可同时添加多个岗位 · 各自独立的笔面流程
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    className="admin-btn admin-btn-ghost px-2 py-1 text-[11px]"
+                    disabled={activeRole === 0}
+                    onClick={() => setActiveRole((v) => Math.max(0, v - 1))}
+                  >
+                    ← 上一个
+                  </button>
+                  <button
+                    type="button"
+                    className="admin-btn admin-btn-ghost px-2 py-1 text-[11px]"
+                    disabled={activeRole >= roleDrafts.length - 1}
+                    onClick={() =>
+                      setActiveRole((v) => Math.min(roleDrafts.length - 1, v + 1))
                     }
                   >
-                    <option value="">未填</option>
-                    <option value="pending">待出</option>
-                    <option value="pass">通过</option>
-                    <option value="fail">挂了</option>
-                    <option value="skip">免笔</option>
-                  </select>
-                </label>
-                <label className="flex items-end gap-2 pb-2 text-xs text-gray-400 sm:col-span-2">
-                  <input
-                    type="checkbox"
-                    checked={form.exam_done}
-                    onChange={(e) =>
-                      setForm({ ...form, exam_done: e.target.checked })
-                    }
-                  />
-                  已考完
-                </label>
-              </div>
-            </div>
-
-            {/* 多轮面试 */}
-            <div className="mt-3 rounded-xl border border-violet-400/15 bg-violet-400/[0.04] p-3">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <div className="text-xs font-semibold text-violet-200/90">
-                  面试轮次
+                    下一个 →
+                  </button>
+                  <button
+                    type="button"
+                    className="admin-btn admin-btn-primary px-2 py-1 text-[11px]"
+                    onClick={addRoleEntry}
+                  >
+                    + 再加岗位
+                  </button>
+                  <button
+                    type="button"
+                    disabled={roleDrafts.length <= 1 || !!editingId}
+                    title={editingId ? "编辑模式下不支持新增岗位条目，请直接新建投递" : undefined}
+                    className="px-2 py-1 text-[11px] rounded-md border border-rose-500/25 bg-rose-500/[0.07] text-rose-300 hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => removeRoleEntry(activeRole)}
+                  >
+                    × 删除该岗位
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  className="admin-btn admin-btn-ghost px-2 py-1 text-[11px]"
-                  onClick={() => {
-                    const nextName =
-                      ROUND_NAMES[Math.min(rounds.length, ROUND_NAMES.length - 1)] ||
-                      `第${rounds.length + 1}面`;
-                    setRounds((prev) => [...prev, newRound(nextName)]);
-                  }}
-                >
-                  + 加一轮
-                </button>
               </div>
-              {!rounds.length && (
-                <p className="qz-hint mb-2">还没有面试，点「加一轮」：一面 / 二面 / HR…</p>
-              )}
-              <div className="space-y-2">
-                {rounds.map((r, idx) => (
-                  <div key={r.id} className="qz-round-card">
-                    <div className="grid gap-2 sm:grid-cols-12">
-                      <label className="block sm:col-span-2">
-                        <span className="admin-field-label">轮次</span>
-                        <select
+
+              {/* 标签页：所有岗位条目 Tab */}
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {roleDrafts.map((rd, idx) => (
+                  <button
+                    key={rd._uid}
+                    type="button"
+                    onClick={() => setActiveRole(idx)}
+                    className={[
+                      "px-2.5 py-1 rounded-full text-[11px] border transition",
+                      idx === activeRole
+                        ? "border-cyan-400/50 bg-cyan-400/15 text-cyan-100 shadow-[0_0_12px_rgba(34,211,238,0.25)]"
+                        : "border-white/5 bg-white/[0.02] text-gray-400 hover:text-gray-200 hover:bg-white/[0.05]",
+                    ].join(" ")}
+                  >
+                    <span className="tools-mono mr-1 opacity-60">{idx + 1}</span>
+                    {rd.role ? rd.role : "（未填岗位）"}
+                  </button>
+                ))}
+              </div>
+
+              {/* 当前激活的岗位草稿卡 */}
+              {roleDrafts.map((rd, idx) =>
+                idx !== activeRole ? null : (
+                  <div key={rd._uid} className="space-y-3">
+                    {/* 岗位基本信息：岗位名 + 官网投递链接 + JD链接 */}
+                    <div className="grid gap-2.5 sm:grid-cols-6">
+                      <label className="block sm:col-span-6">
+                        <span className="admin-field-label">岗位 *</span>
+                        <input
                           className="admin-input"
-                          value={r.round}
+                          required
+                          placeholder="如：后端开发 / 客户端 / Java 开发"
+                          value={rd.role}
                           onChange={(e) =>
-                            updateRound(r.id, { round: e.target.value })
+                            updateRoleEntry(idx, { role: e.target.value })
                           }
-                        >
-                          {ROUND_NAMES.map((n) => (
-                            <option key={n} value={n}>
-                              {n}
-                            </option>
-                          ))}
-                          {!ROUND_NAMES.includes(r.round) && r.round && (
-                            <option value={r.round}>{r.round}</option>
-                          )}
-                        </select>
+                        />
                       </label>
                       <label className="block sm:col-span-3">
-                        <span className="admin-field-label">日期</span>
+                        <span className="admin-field-label">
+                          🚀 官网投递链接
+                        </span>
                         <input
-                          type="date"
                           className="admin-input"
-                          value={r.at}
+                          placeholder="https://jobs.bytedance.com/..."
+                          value={rd.apply_url}
                           onChange={(e) =>
-                            updateRound(r.id, { at: e.target.value })
+                            updateRoleEntry(idx, { apply_url: e.target.value })
                           }
                         />
                       </label>
-                      <label className="block sm:col-span-4">
-                        <span className="admin-field-label">会议链接</span>
+                      <label className="block sm:col-span-3">
+                        <span className="admin-field-label">JD 链接</span>
                         <input
                           className="admin-input"
-                          placeholder="腾讯会议 / 飞书…"
-                          value={r.url}
+                          placeholder="岗位描述页面"
+                          value={rd.jd_url}
                           onChange={(e) =>
-                            updateRound(r.id, { url: e.target.value })
+                            updateRoleEntry(idx, { jd_url: e.target.value })
                           }
                         />
                       </label>
-                      <label className="block sm:col-span-2">
-                        <span className="admin-field-label">结果</span>
-                        <select
+                      <label className="block sm:col-span-3">
+                        <span className="admin-field-label">薪资</span>
+                        <input
                           className="admin-input"
-                          value={r.result}
+                          placeholder="15-25k · 16薪"
+                          value={rd.salary}
                           onChange={(e) =>
-                            updateRound(r.id, { result: e.target.value })
+                            updateRoleEntry(idx, { salary: e.target.value })
                           }
-                        >
-                          <option value="">未填</option>
-                          <option value="pending">待出</option>
-                          <option value="pass">通过</option>
-                          <option value="fail">挂了</option>
-                        </select>
+                        />
                       </label>
-                      <div className="flex items-end justify-between gap-2 sm:col-span-1">
-                        <label className="flex items-center gap-1 pb-2 text-[11px] text-gray-400">
+                      <label className="block sm:col-span-6">
+                        <span className="admin-field-label">备注</span>
+                        <textarea
+                          className="admin-input min-h-[56px]"
+                          placeholder="内推人、注意事项…"
+                          value={rd.notes}
+                          onChange={(e) =>
+                            updateRoleEntry(idx, { notes: e.target.value })
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    {/* 笔试块 — 绑定当前岗位 */}
+                    <div className="rounded-xl border border-amber-400/15 bg-amber-400/[0.04] p-3">
+                      <div className="mb-2 text-xs font-semibold text-amber-200/90">
+                        笔试（没有可留空）
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-12">
+                        <label className="block sm:col-span-3">
+                          <span className="admin-field-label">日期</span>
                           <input
-                            type="checkbox"
-                            checked={r.done}
+                            type="date"
+                            className="admin-input"
+                            value={rd.exam_at}
                             onChange={(e) =>
-                              updateRound(r.id, { done: e.target.checked })
+                              updateRoleEntry(idx, { exam_at: e.target.value })
                             }
                           />
-                          完
                         </label>
+                        <label className="block sm:col-span-5">
+                          <span className="admin-field-label">链接</span>
+                          <input
+                            className="admin-input"
+                            placeholder="https://..."
+                            value={rd.exam_url}
+                            onChange={(e) =>
+                              updateRoleEntry(idx, { exam_url: e.target.value })
+                            }
+                          />
+                        </label>
+                        <label className="block sm:col-span-2">
+                          <span className="admin-field-label">结果</span>
+                          <select
+                            className="admin-input"
+                            value={rd.exam_result}
+                            onChange={(e) =>
+                              updateRoleEntry(idx, { exam_result: e.target.value })
+                            }
+                          >
+                            <option value="">未填</option>
+                            <option value="pending">待出</option>
+                            <option value="pass">通过</option>
+                            <option value="fail">挂了</option>
+                            <option value="skip">免笔</option>
+                          </select>
+                        </label>
+                        <label className="flex items-end gap-2 pb-2 text-xs text-gray-400 sm:col-span-2">
+                          <input
+                            type="checkbox"
+                            checked={rd.exam_done}
+                            onChange={(e) =>
+                              updateRoleEntry(idx, { exam_done: e.target.checked })
+                            }
+                          />
+                          已考完
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* 面试轮次块 — 绑定当前岗位 */}
+                    <div className="rounded-xl border border-violet-400/15 bg-violet-400/[0.04] p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="text-xs font-semibold text-violet-200/90">
+                          面试轮次
+                        </div>
                         <button
                           type="button"
-                          className="mb-1 text-[11px] text-rose-300/80 hover:text-rose-200"
-                          onClick={() =>
-                            setRounds((prev) =>
-                              prev.filter((x) => x.id !== r.id)
-                            )
-                          }
-                          aria-label={`删除第${idx + 1}轮`}
+                          className="admin-btn admin-btn-ghost px-2 py-1 text-[11px]"
+                          onClick={() => {
+                            const nextName =
+                              ROUND_NAMES[
+                                Math.min(rd.rounds.length, ROUND_NAMES.length - 1)
+                              ] || `第${rd.rounds.length + 1}面`;
+                            addRound(idx, nextName);
+                          }}
                         >
-                          删
+                          + 加一轮
                         </button>
+                      </div>
+                      {!rd.rounds.length && (
+                        <p className="qz-hint mb-2">
+                          还没有面试，点「加一轮」：一面 / 二面 / HR…
+                        </p>
+                      )}
+                      <div className="space-y-2">
+                        {rd.rounds.map((r, rIdx) => (
+                          <div key={r.id} className="qz-round-card">
+                            <div className="grid gap-2 sm:grid-cols-12">
+                              <label className="block sm:col-span-2">
+                                <span className="admin-field-label">轮次</span>
+                                <select
+                                  className="admin-input"
+                                  value={r.round}
+                                  onChange={(e) =>
+                                    updateRound(idx, r.id, { round: e.target.value })
+                                  }
+                                >
+                                  {ROUND_NAMES.map((n) => (
+                                    <option key={n} value={n}>{n}</option>
+                                  ))}
+                                  {!ROUND_NAMES.includes(r.round) && r.round && (
+                                    <option value={r.round}>{r.round}</option>
+                                  )}
+                                </select>
+                              </label>
+                              <label className="block sm:col-span-3">
+                                <span className="admin-field-label">日期</span>
+                                <input
+                                  type="date"
+                                  className="admin-input"
+                                  value={r.at}
+                                  onChange={(e) =>
+                                    updateRound(idx, r.id, { at: e.target.value })
+                                  }
+                                />
+                              </label>
+                              <label className="block sm:col-span-4">
+                                <span className="admin-field-label">会议链接</span>
+                                <input
+                                  className="admin-input"
+                                  placeholder="腾讯会议 / 飞书…"
+                                  value={r.url}
+                                  onChange={(e) =>
+                                    updateRound(idx, r.id, { url: e.target.value })
+                                  }
+                                />
+                              </label>
+                              <label className="block sm:col-span-2">
+                                <span className="admin-field-label">结果</span>
+                                <select
+                                  className="admin-input"
+                                  value={r.result}
+                                  onChange={(e) =>
+                                    updateRound(idx, r.id, { result: e.target.value })
+                                  }
+                                >
+                                  <option value="">未填</option>
+                                  <option value="pending">待出</option>
+                                  <option value="pass">通过</option>
+                                  <option value="fail">挂了</option>
+                                </select>
+                              </label>
+                              <div className="flex items-end justify-between gap-2 sm:col-span-1">
+                                <label className="flex items-center gap-1 pb-2 text-[11px] text-gray-400">
+                                  <input
+                                    type="checkbox"
+                                    checked={r.done}
+                                    onChange={(e) =>
+                                      updateRound(idx, r.id, { done: e.target.checked })
+                                    }
+                                  />
+                                  完
+                                </label>
+                                <button
+                                  type="button"
+                                  className="mb-1 text-[11px] text-rose-300/80 hover:text-rose-200"
+                                  onClick={() => removeRound(idx, r.id)}
+                                  aria-label={`删除第${rIdx + 1}轮`}
+                                >
+                                  删
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   </div>
-                ))}
-              </div>
+                )
+              )}
             </div>
 
             {autoNext && (
               <p className="mt-3 rounded-lg border border-cyan-400/20 bg-cyan-400/5 px-3 py-2 text-xs text-cyan-200/90">
-                最近节点（自动）：
+                最近节点（自动，基于当前岗位）：
                 <span className="tools-mono ml-1 font-semibold">{autoNext}</span>
                 <span className="ml-2 text-cyan-200/50">
                   由未完成的笔试/面试日期算出，不用手填
                 </span>
               </p>
-            )}
-
-            <button
-              type="button"
-              className="mt-3 text-xs text-gray-500 underline-offset-2 hover:text-cyan-300 hover:underline"
-              onClick={() => setShowMore((v) => !v)}
-            >
-              {showMore ? "收起更多" : "更多：薪资 / JD / 备注…"}
-            </button>
-
-            {showMore && (
-              <div className="mt-2 grid gap-2.5 sm:grid-cols-2">
-                <label className="block">
-                  <span className="admin-field-label">优先级</span>
-                  <select
-                    className="admin-input"
-                    value={form.priority}
-                    onChange={(e) =>
-                      setForm({ ...form, priority: e.target.value })
-                    }
-                  >
-                    {(meta?.priorities || []).map((s) => (
-                      <option key={s.key} value={s.key}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="admin-field-label">薪资</span>
-                  <input
-                    className="admin-input"
-                    placeholder="15-25k · 16薪"
-                    value={form.salary}
-                    onChange={(e) =>
-                      setForm({ ...form, salary: e.target.value })
-                    }
-                  />
-                </label>
-                <label className="block">
-                  <span className="admin-field-label">JD 链接</span>
-                  <input
-                    className="admin-input"
-                    value={form.jd_url}
-                    onChange={(e) =>
-                      setForm({ ...form, jd_url: e.target.value })
-                    }
-                  />
-                </label>
-                <label className="block">
-                  <span className="admin-field-label">投递页</span>
-                  <input
-                    className="admin-input"
-                    value={form.apply_url}
-                    onChange={(e) =>
-                      setForm({ ...form, apply_url: e.target.value })
-                    }
-                  />
-                </label>
-                <label className="block sm:col-span-2">
-                  <span className="admin-field-label">备注</span>
-                  <textarea
-                    className="admin-input min-h-[72px]"
-                    value={form.notes}
-                    onChange={(e) =>
-                      setForm({ ...form, notes: e.target.value })
-                    }
-                    placeholder="内推人、注意事项…"
-                  />
-                </label>
-              </div>
             )}
 
             <div className="mt-5 flex flex-wrap justify-end gap-2">
