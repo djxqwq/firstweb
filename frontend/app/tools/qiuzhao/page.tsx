@@ -241,7 +241,7 @@ const STATUS_STYLE: Record<string, string> = {
   closed: "bg-zinc-500/20 text-zinc-400",
 };
 
-/** 招聘流程进度 — 从投递到 Offer 的 5 步进度映射 */
+/** 招聘流程进度 — 固定的 5 个大阶段（用于状态→阶段映射） */
 const PIPELINE: { key: StatusKey; label: string }[] = [
   { key: "wishlist", label: "收藏" },
   { key: "applied", label: "投递" },
@@ -251,12 +251,108 @@ const PIPELINE: { key: StatusKey; label: string }[] = [
 ];
 const TERMINAL = new Set(["rejected", "ghosted", "closed"]);
 
-function pipelineProgress(status: string): { pct: number; step: number } {
-  if (TERMINAL.has(status)) return { pct: 100, step: -1 };
-  const idx = PIPELINE.findIndex((s) => s.key === status);
-  if (idx < 0) return { pct: 0, step: 0 };
-  const pct = Math.round(((idx + 1) / PIPELINE.length) * 100);
-  return { pct, step: idx };
+/** 动态生成进度条 step：根据 rounds 把「面试」拆成 一面/二面/三面…
+ *
+ * 返回：每个 step { label, state: 'done' | 'active' | 'idle' | 'dead' }
+ *   - done   已过去的步骤（绿色）
+ *   - active 当前步骤（青色高亮）
+ *   - idle   未开始（灰色）
+ *   - dead   挂了/鸽了/关闭的状态（全体降饱和 + 标红最终点）
+ *   pct：进度条填充百分比（0~100）
+ */
+type StepState = "done" | "active" | "idle" | "dead";
+type DynStep = { label: string; state: StepState; key: string };
+function buildPipelineSteps(
+  status: StatusKey | string,
+  rounds: InterviewRound[] | undefined | null,
+  hasExam: boolean
+): { steps: DynStep[]; pct: number } {
+  // 1. 构建基础 step 序列（无面试展开时 5 步，笔试跳过则 4 步）
+  const base: DynStep[] = [
+    { key: "wishlist", label: "收藏", state: "idle" },
+    { key: "applied", label: "投递", state: "idle" },
+  ];
+  if (hasExam) base.push({ key: "exam", label: "笔试", state: "idle" });
+  // 面试拆分成 1 条或多条（至少保留「面试」占位）
+  const rs = rounds || [];
+  if (rs.length === 0) {
+    base.push({ key: "interview", label: "面试", state: "idle" });
+  } else {
+    for (let i = 0; i < rs.length; i++) {
+      const name = rs[i].round || `第${i + 1}面`;
+      base.push({ key: `iv-${i}-${name}`, label: name, state: "idle" });
+    }
+  }
+  base.push({ key: "offer", label: "Offer", state: "idle" });
+
+  // 2. 确定当前到达的大阶段索引：status 对应 PIPELINE 的下标
+  const stageIdx = PIPELINE.findIndex((s) => s.key === status); // -1 表示 unknown/terminal
+  const isTerminal = TERMINAL.has(status);
+  const isOffer = status === "offer";
+
+  // 3. 对每个 step 逐个着色
+  for (let i = 0; i < base.length; i++) {
+    const s = base[i];
+    // 先映射到对应「大阶段」下标
+    let bigStage: number;
+    if (s.key === "wishlist") bigStage = 0;
+    else if (s.key === "applied") bigStage = 1;
+    else if (s.key === "exam") bigStage = 2;
+    else if (s.key === "offer") bigStage = 4;
+    else if (s.key.startsWith("iv-")) bigStage = 3;
+    else bigStage = -1;
+
+    if (isTerminal) {
+      s.state = "dead"; // 全体降饱和变灰红
+      continue;
+    }
+    if (isOffer) {
+      s.state = "done";
+      continue;
+    }
+
+    // 正常流程（stageIdx 表示当前在的那一大步）
+    if (bigStage < stageIdx) {
+      s.state = "done";
+    } else if (bigStage === stageIdx) {
+      // 同一个大阶段里：
+      //   - 如果是「面试」大阶段，rounds 中第一个 not done 的轮次是 active，之前的 done，之后的 idle
+      //   - 否则单步的话就是 active
+      if (stageIdx === 3 && rs.length > 0 && s.key.startsWith("iv-")) {
+        const idxInRounds = rs.findIndex((r) => {
+          const name = r.round || `第${rs.indexOf(r) + 1}面`;
+          return s.key === `iv-${rs.indexOf(r)}-${name}`;
+        });
+        if (idxInRounds < 0) {
+          s.state = "active";
+        } else {
+          // 找到第一个未完成的轮次
+          const firstActive = rs.findIndex((r) => !r.done);
+          const activeRound = firstActive < 0 ? rs.length : firstActive;
+          if (idxInRounds < activeRound) s.state = "done";
+          else if (idxInRounds === activeRound) s.state = "active";
+          else s.state = "idle";
+        }
+      } else {
+        s.state = "active";
+      }
+    } else {
+      s.state = "idle";
+    }
+  }
+
+  // 4. 百分比
+  let stepPos = 0;
+  for (let i = 0; i < base.length; i++) {
+    const s = base[i];
+    if (s.state === "done") stepPos = i + 1;
+    else if (s.state === "active") {
+      stepPos = i + 0.5;
+      break;
+    }
+  }
+  const pct = Math.round((stepPos / base.length) * 100);
+  return { steps: base, pct };
 }
 
 /** 返回近 6 个月 （YYYY-MM） 数组，从当月往前推 */
@@ -1030,38 +1126,123 @@ export default function QiuzhaoPage() {
                         {item.track ? ` · ${item.track}` : ""}
                         {item.channel ? ` · ${item.channel}` : ""}
                       </div>
-                      {/* 招聘流程进度条 */}
-                      <div className="qz-track-wrap">
-                        <div className="qz-track-bar">
-                          <div
-                            className="qz-track-fill"
-                            style={{
-                              width: `${pipelineProgress(item.status).pct}%`,
-                              filter: TERMINAL.has(item.status)
-                                ? "saturate(0.35) brightness(0.75)"
-                                : undefined,
-                            }}
-                          />
-                        </div>
-                        <div className="qz-track-steps">
-                          {PIPELINE.map((p, pi) => {
-                            const { step } = pipelineProgress(item.status);
-                            const cls =
-                              TERMINAL.has(item.status)
-                                ? "text-rose-400/80"
-                                : pi < step
-                                  ? "done"
-                                  : pi === step
-                                    ? "active"
-                                    : "";
-                            return (
-                              <span key={p.key} className={cls}>
-                                {p.label}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </div>
+                      {/* 招聘流程进度条（动态展开一轮/二轮…） */}
+                      {(() => {
+                        const rs = roundsFromItem(item);
+                        const hasExam = Boolean(item.exam_at || item.exam_url || item.exam_done);
+                        const { steps, pct } = buildPipelineSteps(item.status, rs, hasExam);
+                        const isTerminal = TERMINAL.has(item.status);
+                        return (
+                          <div className="qz-track-wrap">
+                            <div className="qz-track-bar">
+                              <div
+                                className="qz-track-fill"
+                                style={{
+                                  width: `${pct}%`,
+                                  filter: isTerminal
+                                    ? "saturate(0.3) brightness(0.72) hue-rotate(-10deg)"
+                                    : undefined,
+                                }}
+                              />
+                            </div>
+                            <div className="qz-track-steps">
+                              {steps.map((s) => {
+                                const cls =
+                                  s.state === "dead"
+                                    ? "text-rose-400/80"
+                                    : s.state === "done"
+                                      ? "done"
+                                      : s.state === "active"
+                                        ? "active"
+                                        : "";
+                                return (
+                                  <span key={s.key} className={cls}>
+                                    {s.label}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* 快捷链接按钮组：官网投递 / JD / 笔试 / 最近面试会议 */}
+                      {(() => {
+                        const rs = roundsFromItem(item);
+                        const nextMeeting = rs.find((r) => r.url && !r.done) || rs.find((r) => r.url);
+                        return (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                            <a
+                              href={item.apply_url || undefined}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={item.apply_url ? "打开官网投递页面" : "没填官网投递链接"}
+                              className={[
+                                "inline-flex h-6 items-center gap-1 rounded-md border px-1.5 text-[10px]",
+                                item.apply_url
+                                  ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-200 hover:bg-cyan-400/20 hover:text-white"
+                                  : "cursor-not-allowed border-white/5 bg-white/[0.02] text-gray-600",
+                              ].join(" ")}
+                              onClick={(e) => {
+                                if (!item.apply_url) e.preventDefault();
+                              }}
+                            >
+                              🚀 <span>投递</span>
+                            </a>
+                            <a
+                              href={item.jd_url || undefined}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={item.jd_url ? "打开 JD 页面" : "没填 JD 链接"}
+                              className={[
+                                "inline-flex h-6 items-center gap-1 rounded-md border px-1.5 text-[10px]",
+                                item.jd_url
+                                  ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20 hover:text-white"
+                                  : "cursor-not-allowed border-white/5 bg-white/[0.02] text-gray-600",
+                              ].join(" ")}
+                              onClick={(e) => {
+                                if (!item.jd_url) e.preventDefault();
+                              }}
+                            >
+                              📄 <span>JD</span>
+                            </a>
+                            <a
+                              href={item.exam_url || undefined}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={item.exam_url ? "打开笔试链接" : "没填笔试链接"}
+                              className={[
+                                "inline-flex h-6 items-center gap-1 rounded-md border px-1.5 text-[10px]",
+                                item.exam_url
+                                  ? "border-amber-400/25 bg-amber-400/10 text-amber-200 hover:bg-amber-400/20 hover:text-white"
+                                  : "cursor-not-allowed border-white/5 bg-white/[0.02] text-gray-600",
+                              ].join(" ")}
+                              onClick={(e) => {
+                                if (!item.exam_url) e.preventDefault();
+                              }}
+                            >
+                              🖋️ <span>笔试</span>
+                            </a>
+                            <a
+                              href={nextMeeting?.url || undefined}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={nextMeeting?.url ? `打开会议：${nextMeeting.round}` : "没填面试会议链接"}
+                              className={[
+                                "inline-flex h-6 items-center gap-1 rounded-md border px-1.5 text-[10px]",
+                                nextMeeting?.url
+                                  ? "border-violet-400/30 bg-violet-400/10 text-violet-200 hover:bg-violet-400/20 hover:text-white"
+                                  : "cursor-not-allowed border-white/5 bg-white/[0.02] text-gray-600",
+                              ].join(" ")}
+                              onClick={(e) => {
+                                if (!nextMeeting?.url) e.preventDefault();
+                              }}
+                            >
+                              🎥 <span>{nextMeeting?.round || "面试"}</span>
+                            </a>
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-3">
                       <span
@@ -1264,18 +1445,86 @@ export default function QiuzhaoPage() {
                         <div className="mt-0.5 text-[11px] text-[var(--tools-muted)]">
                           {item.role || "未填岗位"}
                         </div>
-                        {/* 卡片内迷你进度条 */}
+                        {/* 卡片内快捷链接按钮组 */}
+                        {(() => {
+                          const rs = roundsFromItem(item);
+                          const nextMeeting = rs.find((r) => r.url && !r.done) || rs.find((r) => r.url);
+                          const anyLink = item.apply_url || item.jd_url || item.exam_url || nextMeeting?.url;
+                          if (!anyLink) return null;
+                          const chip =
+                            "inline-flex h-5 items-center gap-0.5 rounded border px-1 text-[9px] transition active:scale-95";
+                          return (
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              {item.apply_url && (
+                                <a
+                                  href={item.apply_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title="官网投递"
+                                  className={`${chip} border-cyan-400/25 bg-cyan-400/10 text-cyan-200 hover:bg-cyan-400/20 hover:text-white`}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  🚀投递
+                                </a>
+                              )}
+                              {item.jd_url && (
+                                <a
+                                  href={item.jd_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title="JD 页面"
+                                  className={`${chip} border-emerald-400/20 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20 hover:text-white`}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  📄JD
+                                </a>
+                              )}
+                              {item.exam_url && (
+                                <a
+                                  href={item.exam_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title="笔试链接"
+                                  className={`${chip} border-amber-400/20 bg-amber-400/10 text-amber-200 hover:bg-amber-400/20 hover:text-white`}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  🖋️笔试
+                                </a>
+                              )}
+                              {nextMeeting?.url && (
+                                <a
+                                  href={nextMeeting.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title={`面试会议：${nextMeeting.round}`}
+                                  className={`${chip} border-violet-400/25 bg-violet-400/10 text-violet-200 hover:bg-violet-400/20 hover:text-white`}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  🎥{nextMeeting.round || "面试"}
+                                </a>
+                              )}
+                            </div>
+                          );
+                        })()}
+                        {/* 卡片内迷你进度条（百分比按动态步骤算） */}
                         <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/[0.04]">
-                          <div
-                            className="h-full rounded-full bg-gradient-to-r from-sky-400 via-violet-400 to-emerald-400"
-                            style={{
-                              width: `${pipelineProgress(item.status).pct}%`,
-                              filter: TERMINAL.has(item.status)
-                                ? "saturate(0.35) brightness(0.7)"
-                                : undefined,
-                              boxShadow: "0 0 6px rgba(167,139,250,0.45)",
-                            }}
-                          />
+                          {(() => {
+                            const rs = roundsFromItem(item);
+                            const hasExam = Boolean(item.exam_at || item.exam_url || item.exam_done);
+                            const { pct } = buildPipelineSteps(item.status, rs, hasExam);
+                            return (
+                              <div
+                                className="h-full rounded-full bg-gradient-to-r from-sky-400 via-violet-400 to-emerald-400"
+                                style={{
+                                  width: `${pct}%`,
+                                  filter: TERMINAL.has(item.status)
+                                    ? "saturate(0.3) brightness(0.7) hue-rotate(-10deg)"
+                                    : undefined,
+                                  boxShadow: "0 0 6px rgba(167,139,250,0.45)",
+                                }}
+                              />
+                            );
+                          })()}
                         </div>
                         {item.next_action_at && (
                           <div
