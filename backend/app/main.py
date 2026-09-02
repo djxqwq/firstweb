@@ -75,13 +75,13 @@ if DATABASE_URL.startswith("mysql"):
     _ssl_ctx.verify_mode = _ssl.CERT_NONE
     connect_args = {"ssl": _ssl_ctx, "connect_timeout": 10}
 # pool_recycle=300：5 分钟回收，远小于 TiDB Cloud 空闲超时，防死连接
-# pool_size=2 + max_overflow=3：每个 worker 最多 5 连接，4 worker=20 总量
+# pool_size=5 + max_overflow=5：每个 worker 最多 10 连接，2 worker=20 总量
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
     pool_recycle=300,
-    pool_size=2,
-    max_overflow=3,
+    pool_size=5,
+    max_overflow=5,
     connect_args=connect_args,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -787,15 +787,9 @@ def _lookup_visitor_note(
 
 # ---- Public ----
 @app.get("/api/health")
-def health(db: Session = Depends(get_db)):
-    try:
-        db.execute(sqlalchemy_text("SELECT 1"))
-        return {"ok": True, "db": DATABASE_URL.split("://")[0]}
-    except Exception:
-        return JSONResponse(
-            status_code=503,
-            content={"ok": False, "db": DATABASE_URL.split("://")[0], "error": "database unreachable"},
-        )
+def health():
+    # 只检查进程存活，不查数据库（避免连接池耗尽 / 启动时 DB 慢导致健康检查失败）
+    return {"ok": True, "db": DATABASE_URL.split("://")[0]}
 
 
 @app.get("/api/profile")
