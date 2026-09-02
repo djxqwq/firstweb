@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
@@ -773,8 +773,18 @@ export default function QiuzhaoPage() {
       if (editingId) {
         // 编辑模式：单条 PUT，取第 0 条岗位草稿
         const rd = roleDrafts[0];
+        // 自动状态推断：填了笔试→笔试；填了面试→面试；不回退
+        const hasExam = Boolean(rd.exam_at || rd.exam_url);
+        const hasInterview = rd.rounds.some((r) => r.at || r.url);
+        let autoStatus = form.status;
+        if (hasInterview && !["offer", "rejected"].includes(form.status)) {
+          autoStatus = "interview";
+        } else if (hasExam && !["interview", "offer", "rejected"].includes(form.status)) {
+          autoStatus = "exam";
+        }
         const payload = {
           ...form,
+          status: autoStatus,
           role: rd.role,
           apply_url: rd.apply_url,
           jd_url: rd.jd_url,
@@ -810,8 +820,18 @@ export default function QiuzhaoPage() {
         let failed = 0;
         for (let i = 0; i < roleDrafts.length; i++) {
           const rd = roleDrafts[i];
+          // 自动状态推断：填了笔试→笔试；填了面试→面试；不回退
+          const hasExam = Boolean(rd.exam_at || rd.exam_url);
+          const hasInterview = rd.rounds.some((r) => r.at || r.url);
+          let autoStatus = form.status;
+          if (hasInterview && !["offer", "rejected"].includes(form.status)) {
+            autoStatus = "interview";
+          } else if (hasExam && !["interview", "offer", "rejected"].includes(form.status)) {
+            autoStatus = "exam";
+          }
           const payload = {
             ...form,
+            status: autoStatus,
             role: rd.role,
             apply_url: rd.apply_url,
             jd_url: rd.jd_url,
